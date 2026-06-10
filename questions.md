@@ -4,7 +4,7 @@
 - "What's our [KPI] for [time period] and how does it look by [dimension] YoY?"
 - "How is the [dimension] mix shift changed over [time period]?"
 - "How are we tracking on cash, NPLs and NRLs this month vs the same period last year — and which region's driving the gap?"
-- "How's retention looking right now — first renewal (M1→M2) versus repeat renewals (M2+)?"
+- "How's retention looking right now — first renewal (M1→M2) versus 1+ renewals (M2+)?"
 - "Where are we on total payers month-to-date, and how does that trend against last month and last year?"
 
 ## Bucket: Ad-hoc segment lookups
