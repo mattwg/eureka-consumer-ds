@@ -1,0 +1,111 @@
+---
+name: promo-campaign-recap
+description: "Consumer (B2C) promo campaign performance recap — given a set of promo campaigns (tentpoles, C+ Monthly waves, etc.) and a date range, computes the standard set of cuts (cash, redemptions, NPL/Non-NPL, region, traffic source/channel, page-level attribution) the same way each time, and grows an extensible registry of known campaigns as new ones launch. Use when asked for a quarterly/tentpole post-mortem, 'how did campaign X do broken out by region/page/channel,' or a multi-campaign performance comparison. Mentions completed_carts, promotion_id, promotion_name, cash_receipt_usd_estimate, NPL, C+ Monthly, C+ Annual, tentpole. Do NOT use for a single ad-hoc metric pull (use promo-metrics-lookup) or for diagnosing why a metric moved (use promo-metric-rca) — this skill assembles on top of both."
+compatibility:
+  requires: Coursera Data MCP (MintMCP) for live Databricks query execution
+metadata:
+  author: atonge
+  pod: consumer_and_degree_strategy_ds / consumer_ds
+  version: 0.1.0
+  mcp-server: databricksmc
+---
+
+# Promo Campaign Recap
+
+Given a set of promo campaigns, computes the standard recap cuts (cash, redemptions, payer type,
+region, channel, page-level attribution) the same way every time, reusing corrections and
+methodology that took real work to get right the first time. Built from the Q2 2026 tentpole
+post-mortem (Q1/Q2 C+ Monthly, March/June Tentpole) — that work is the worked example this skill
+generalizes from.
+
+**Design goal: easy to extend.** New campaigns get added to one small file
+([references/campaign-registry.md](references/campaign-registry.md)) without touching the
+methodology. New teammates picking this up should be able to add a campaign or a new cut without
+re-deriving the corrections that are already documented.
+
+## When to Use This Skill
+
+- "Can we get a Q3 tentpole post-mortem — cash/redemptions in total and by campaign?"
+- "Break out [campaign]'s performance by region / page type / traffic channel."
+- "How do C+ Monthly and C+ Annual tentpole redemptions compare this quarter?"
+- Any ask matching the "Deep dive on: regional split / page-level split / traffic source /
+  conversion funnel / C+ landing page" pattern from a stakeholder recap request.
+
+## Workflow
+
+1. **Scope the campaigns.** Check [references/campaign-registry.md](references/campaign-registry.md)
+   for known campaigns. If a campaign isn't there yet, discover its `promotion_id`(s) empirically
+   (see [references/query-patterns.md](references/query-patterns.md) → "Discovering a new
+   campaign's promotion_ids") and **confirm the definition with the requester before adding it** —
+   see the "always confirm scope nuances" lesson in
+   [references/known-corrections.md](references/known-corrections.md). Don't infer scope from
+   naming/ID clustering alone, even when it looks obvious.
+2. **Scope first, then work one cut/hypothesis at a time.** Agree on objectives + which cuts are
+   needed before running anything; don't front-load every cut/query at once.
+3. **Apply the three standing corrections** (payment_order=1, C+ Annual SKU dual detection,
+   2-day late-arrival trim) to every query — see
+   [references/known-corrections.md](references/known-corrections.md) for what each one fixes and
+   why. These are not optional per-cut — they apply regardless of which cut you're building.
+4. **Pick the cut(s) needed** and start from the matching worked pattern in
+   [references/query-patterns.md](references/query-patterns.md) (base metrics, region, channel,
+   page-level, or the not-yet-finalized funnel/C+-landing-page patterns) — reuse a saved query in
+   [queries/](queries/) rather than rewriting from scratch.
+5. **Cross-check against any existing reference/production query** the requester can share before
+   trusting your own first draft — this caught two real bugs (the wrong SKU-detection column, and
+   the payment_order/renewal-inflation issue) during this skill's development. Don't skip this step
+   just because your own query looks reasonable.
+6. **Run it** via the Databricks MCP read-only tool (`databricksmc__execute_sql_read_only`; poll
+   with `databricksmc__poll_sql_result`). For any Amplitude-based cut, budget for running it one
+   campaign at a time with tight `event_date` bounds — a combined multi-campaign query can take
+   several minutes or fail to complete (see known-corrections.md's performance lesson).
+7. **Save the finished query** to [queries/](queries/) with a header comment documenting: what
+   corrections were applied and why, any judgment calls made, a consistency-check note (does the
+   new cut's total match the base metrics total?), and known caveats (e.g. a campaign still inside
+   the reconciliation window is provisional).
+
+## Quick Start
+
+**Base metrics for a known campaign, from the registry:**
+```sql
+-- Full worked example: queries/q2_tentpole_base_metrics.sql
+WITH campaign_map AS (
+    SELECT * FROM VALUES
+        (285085, 'Q2 C+ Monthly')  -- promotion_ids from campaign-registry.md
+    AS t(promotion_id, campaign)
+)
+-- ... join chain + 3 standing corrections + GROUPING SETS for totality + breakdown
+-- see queries/q2_tentpole_base_metrics.sql for the full pattern
+```
+
+## Reference Files
+
+| File | Use When |
+|------|----------|
+| [references/campaign-registry.md](references/campaign-registry.md) | You need a campaign's `promotion_id`(s)/date window, or are adding a new campaign |
+| [references/known-corrections.md](references/known-corrections.md) | You need the standing corrections, the real Amplitude field names, or a process lesson from past mistakes |
+| [references/query-patterns.md](references/query-patterns.md) | You need the reusable shape for a specific cut (base/region/channel/page-level/funnel) |
+| [queries/](queries/) | Worked, saved, run queries for the current quarter — start here before writing something new |
+
+## Out of Scope (refuse / redirect)
+
+- **A single ad-hoc metric pull** not tied to a multi-cut campaign recap → use
+  [promo-metrics-lookup](../../../bizml/promotions/promo-metrics-lookup/SKILL.md) instead.
+- **Diagnosing why a metric moved** (cannibalization, pull-forward, benchmark mismatches) → use
+  [promo-metric-rca](../../../bizml/promotions/promo-metric-rca/SKILL.md); this skill produces the
+  numbers RCA diagnoses, it doesn't diagnose them itself.
+- **Actual LTV/RPU/revenue/elasticity values** — non-public financials; compute live, never store
+  or hard-code.
+- **Adding or changing a campaign definition without requester confirmation** — always ask, even
+  when the naming/timing looks obvious. See known-corrections.md.
+- **Any table this skill doesn't document** — say so and stop rather than guessing a table/column.
+
+## Related Skills
+
+- [promo-metrics-lookup](../../../bizml/promotions/promo-metrics-lookup/SKILL.md) — canonical single-
+  metric definitions and the base join chain this skill's patterns are built on.
+- [promo-metric-rca](../../../bizml/promotions/promo-metric-rca/SKILL.md) — diagnoses *why* a metric
+  moved once this skill has produced the numbers.
+- [table-discovery/promotions-tables](../../../../table-discovery/promotions-tables/SKILL.md) — table
+  schemas; check the LIVE schema (`DESCRIBE TABLE`) before trusting a YAML flagged "partial."
+- `Claude.md` (this folder) — general analysis behavior guidelines (state assumptions, avoid
+  overcomplication, precision) that apply to all work in this folder, not just this skill.
