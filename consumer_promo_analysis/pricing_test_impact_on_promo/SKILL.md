@@ -98,54 +98,13 @@ To calculate the final impact, we came up with 2 methodologies:
 
 ## 3. Data sources and query patterns
 
+Each query below has its full, standalone, runnable code in `queries/` (SQL and, where applicable, the matching Python plotting script) — this section carries the context, joins, and caveats; the code files are the source of truth for what to actually run.
+
 ### Query 1 — High Income Pricing Test population (Test/Control + impression window)
 
+📄 [`queries/01_test_control_population.sql`](queries/01_test_control_population.sql)
+
 Identifies the user base exposed to the High Income Pricing Test — their test/control categorization and impression start ts and end ts.
-
-```sql
-WITH variants AS (
-  SELECT
-    -- Experiment metadata.
-    epic_experiment_id
-    , epic_experiment_started_at
-    , epic_experiment_ended_ts
-    , MAX(COALESCE(epic_experiment_ended_ts, CURRENT_DATE)) OVER () AS end_ts
-    , epic_experiment_display_name
-    -- Variant metadata.
-    , epic_variant_id
-    , epic_variant_weight
-    , TRIM(REGEXP_REPLACE(epic_variant_name, '', '')) AS cleaned_epic_variant_name
-    ,
-    (MAX(CASE WHEN epic_variant_index = 0 AND epic_experiment_id = 'kEs8FDkHEfGErBK2XQAA3w' THEN 1 ELSE 0 END)
-    OVER (PARTITION BY TRIM(REGEXP_REPLACE(epic_variant_name, '', ''))))::BOOLEAN
-     AS is_control
-    -- Get the order of variants. Order same as EPIC unless control is manually set, in which case control is put first.
-    , CASE
-    WHEN is_control THEN 1
-    ELSE -MIN(epic_variant_index) OVER (PARTITION BY TRIM(REGEXP_REPLACE(epic_variant_name, '', '')))
-    END AS sort_by
-  FROM prod.bi.epic_variants
-  JOIN prod.bi.epic_experiments USING (epic_experiment_id)
-  WHERE (
-  epic_experiment_id = 'kEs8FDkHEfGErBK2XQAA3w'
-  )
-  AND epic_experiment_allocation_type = 'BY_USER'
-  )
-
-SELECT
-  is_control
-  , user_id
-  -- Get impression start and end timestamps for metrics calculations. This includes users
-  , MIN(impression_ts) AS start_ts,
-    MAX(end_ts) AS end_ts
-FROM prod.bi.epic_user_impressions
-JOIN variants USING (epic_experiment_id, epic_variant_id)
-WHERE
-  impression_dt BETWEEN epic_experiment_started_at::DATE AND COALESCE(epic_experiment_ended_ts::DATE, CURRENT_DATE) -- speeds up the computation
-  AND impression_ts BETWEEN epic_experiment_started_at AND COALESCE(epic_experiment_ended_ts, CURRENT_DATE)
-  AND 1=1 -- no filter on 'impressions.impression_date'
-GROUP BY 1, 2
-```
 
 **What this captures:** the reusable `high_pricing_test_users` building block referenced by every downstream query in this analysis. `epic_experiment_id = 'kEs8FDkHEfGErBK2XQAA3w'` pins it to this specific test. `is_control` is derived from `epic_variant_index = 0` on the matching experiment, not from the variant name. `end_ts` is a global constant (`MAX(...) OVER ()` with no partition) — see the pitfall on EPIC stickiness in Section 5 and the caveat below.
 
@@ -153,82 +112,9 @@ GROUP BY 1, 2
 
 ### Query 2 — Base skeleton: marrying test users with transaction data
 
-Sample skeleton query for marrying the test users (Query 1) with transaction data, looking at their transactions from a start date until `today - 2`. **The date bounds in the final `WHERE` change per use case** (promo start, test start, etc.) — the reusable part is the joins and logic below.
+📄 [`queries/02_base_transaction_skeleton.sql`](queries/02_base_transaction_skeleton.sql)
 
-```sql
-with domain as (
-    select distinct
-        coalesce(c.course_slug,ps.phoenix_specialization_slug) as product_slug
-        ,upp.underlying_product_item_id
-        ,coalesce(course_primary_domain,phoenix_specialization_primary_domain) as primary_domain
-    from prod.bi.underlying_products_partners upp
-    left join prod.gold.courses_vw c
-        on c.course_id = upp.underlying_product_item_id
-    left join prod.gold.phoenix_specializations_vw ps
-        on ps.phoenix_specialization_id = upp.underlying_product_item_id
-),
-high_pricing_test_users AS (
-      -- Query 1 above
-      ...
-)
-SELECT * FROM (
-SELECT
-    CAST(COALESCE(CAST(hpt.is_control AS STRING),'non-high_pricing_test_population') AS STRING) AS hpt_flag,
-    ab.*,
-    hpt.start_ts AS hpt_start_ts,
-    hpt.end_ts AS hpt_end_ts,
-    b.country_group_finance,
-    COALESCE(b1.product_sub_type, ab.underlying_product_type) AS product_sub_type,
-    d.is_cplus_upsell,
-    DATE(ab.transaction_ts) AS transaction_dt,
-    a.payment_order,
-    recurring_payment_start_ts,
-    recurring_payment_end_ts,
-    a.subscription_id,
-    a.subscription_status,
-    a.is_subscription_active,
-    cc1.promotion_name,
-    cc1.promotion_id,
-    CASE WHEN cc1.promotion_id IN (287767, 287768, 287769, 287771, 287775) THEN 1 ELSE 0 END AS Q2_2026_Tentpole_promo_flag,
-    subscription_cancel_ts,
-    subscription_inactivation_ts,
-    f.country_cd,
-    CASE
-        WHEN primary_domain IS NULL THEN 'Others'
-        ELSE primary_domain
-    END AS primary_domain,
-    COALESCE(subscription_cancel_ts, subscription_inactivation_ts) AS subscription_end_ts,
-    ROW_NUMBER() OVER (PARTITION BY ab.transaction_id ORDER BY ab.transaction_ts ASC) AS rn1
-FROM prod.gold.transactions_vw ab
-LEFT JOIN prod.gold.completed_carts_vw cc1
-    ON ab.user_id = cc1.user_id
-    AND ab.cart_id = cc1.cart_id
-LEFT JOIN prod.gold.users_vw f
-    ON ab.user_id = f.user_id
-LEFT JOIN prod.silver_base.static_countries b
-    ON f.country_cd = b.country_cd
-LEFT JOIN prod.bi.subscription_payments a
-    ON a.user_id = ab.user_id
-    AND a.transaction_id = ab.transaction_id
-LEFT JOIN prod.bi.subscriptions bs
-    ON a.user_id = bs.user_id
-    AND a.subscription_id = bs.subscription_id
-LEFT JOIN prod.bi.subscriptions__payment_stats d
-    ON a.user_id = d.user_id
-    AND a.subscription_id = d.subscription_id
-LEFT JOIN domain pt
-    ON a.underlying_product_item_id = pt.underlying_product_item_id
-LEFT JOIN prod.bi.products_detail b1
-    ON ab.product_item_id = b1.product_item_id
-    AND ab.product_type = b1.product_type
-LEFT JOIN high_pricing_test_users hpt ON ab.user_id = hpt.user_id AND ab.transaction_ts between hpt.start_ts AND hpt.end_ts
-WHERE transaction_type = 'BUY'
-    AND NOT was_buy_transaction_refunded
-    AND transaction_business_line = 'B2C'
-    AND DATE(ab.transaction_ts) <= CURRENT_DATE - 2
-    AND DATE(ab.transaction_ts) >= (CAST(DATE_FORMAT(CAST('<start_date>' AS DATE), 'yyyy-MM-dd') AS DATE)))
-    WHERE rn1=1
-```
+Sample skeleton query for marrying the test users (Query 1) with transaction data, looking at their transactions from a start date until `today - 2`. **The date bounds in the final `WHERE` change per use case** (promo start, test start, etc. — the file uses `2026-06-08`, the Q2 '26 Tentpole promo start, as the concrete instance) — the reusable part is the joins and logic below.
 
 **What each join is doing:**
 - `transactions_vw ab` (base fact table) → `completed_carts_vw cc1` on `user_id + cart_id`: pulls `promotion_name`/`promotion_id` so a transaction can be flagged as belonging to the Q2 '26 Tentpole promo (hardcoded `promotion_id` list — swap per promo).
@@ -246,166 +132,23 @@ WHERE transaction_type = 'BUY'
 
 ### Query 3 — Trendline graph: Control & Test, Cash and Users, pricing-test-start through promo-end
 
+📄 [`queries/03_trendline_full_window.sql`](queries/03_trendline_full_window.sql) + [`queries/03_trendline_full_window.py`](queries/03_trendline_full_window.py)
+
 This is **Graph 1** from Section 2's methodology — Cash (lines) and Users (bars) on a dual axis, one subplot per arm (Control, Test), Early Bird shaded, x-axis running from the beginning of the pricing test to the end of the promo. Purpose: see how these users performed *before* the promo kicked in and across the different phases of the promo. **Dates are use-case specific** — swap the pricing-test-start / promo-end bounds and the Early Bird highlight window per analysis.
 
 Builds directly on Query 2's skeleton (`domain`, `high_pricing_test_users`, `base`), adding:
 - `cplus_annual`: filters `base` down to `product_sub_type = 'C Plus annual'` AND `hpt_flag IN ('true', 'false')` — i.e. drops the `'non-high_pricing_test_population'` bucket, keeping only users tagged Test or Control.
 - Final `SELECT`: aggregates to `(transaction_dt, arm, promo_status)` grain — `arm` from `hpt_flag` (`'true'` → Control, else → Test), `promo_status` from whether `promotion_id` is set **and** it's one of the Q2 '26 Tentpole promo IDs.
 
-```sql
-WITH domain AS (
-    SELECT DISTINCT
-        COALESCE(c.course_slug, ps.phoenix_specialization_slug) AS product_slug,
-        upp.underlying_product_item_id,
-        COALESCE(course_primary_domain, phoenix_specialization_primary_domain) AS primary_domain
-    FROM prod.bi.underlying_products_partners upp
-    LEFT JOIN prod.gold.courses_vw c
-        ON c.course_id = upp.underlying_product_item_id
-    LEFT JOIN prod.gold.phoenix_specializations_vw ps
-        ON ps.phoenix_specialization_id = upp.underlying_product_item_id
-),
-high_pricing_test_users AS (
-      -- Query 1 above
-      ...
-),
-base AS (
-  SELECT * FROM (
-    -- Query 2 above
-    ...
-  )
-  WHERE rn1 = 1
-),
-cplus_annual AS (
-  SELECT * FROM base
-  WHERE product_sub_type = 'C Plus annual'
-    AND hpt_flag IN ('true', 'false')
-)
-SELECT
-  transaction_dt,
-  CASE WHEN hpt_flag = 'true' THEN 'Control' ELSE 'Test' END AS arm,
-  CASE WHEN promotion_id IS NOT NULL AND Q2_2026_Tentpole_promo_flag = 1 THEN 'Promo' ELSE 'Non-promo' END AS promo_status,
-  ROUND(SUM(cash_receipt_usd_estimate), 2) AS cash,
-  COUNT(DISTINCT user_id) AS users
-FROM cplus_annual
-GROUP BY 1, 2, 3
-ORDER BY transaction_dt, arm, promo_status
-```
-
-```python
-import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
-
-df = spark.sql(query).toPandas()
-df["transaction_dt"] = pd.to_datetime(df["transaction_dt"])
-df["cash"] = df["cash"].astype(float)
-df["users"] = df["users"].astype(float)
-
-dates = pd.to_datetime(sorted(df["transaction_dt"].unique()))   # DatetimeIndex, not raw np.datetime64
-x = np.arange(len(dates))
-arms = ["Control", "Test"]
-promos = ["Promo", "Non-promo"]
-width = 0.8 / len(promos)
-LBL_STEP = 3
-
-# pivot once, reindex onto the full date axis
-cash_p = (df.pivot_table(index="transaction_dt", columns=["arm", "promo_status"],
-                         values="cash", aggfunc="sum").reindex(dates))
-user_p = (df.pivot_table(index="transaction_dt", columns=["arm", "promo_status"],
-                         values="users", aggfunc="sum").reindex(dates))
-
-eb = [i for i, d in enumerate(dates)
-      if pd.Timestamp("2026-06-08") <= d <= pd.Timestamp("2026-06-17")]
-
-fig, axes = plt.subplots(2, 1, figsize=(24, 15))
-lbl_bbox = dict(boxstyle="round,pad=0.15", fc="white", ec="none", alpha=0.75)
-
-for ax_bar, arm in zip(axes, arms):
-    ax_line = ax_bar.twinx()
-    if eb:
-        ax_bar.axvspan(min(eb) - 0.5, max(eb) + 0.5, color="grey", alpha=0.15, label="Early bird (Jun 8-17)")
-    for i, promo in enumerate(promos):
-        col = (arm, promo)
-        cash_vals = cash_p[col].values if col in cash_p.columns else np.full(len(dates), np.nan)
-        user_vals = user_p[col].values if col in user_p.columns else np.full(len(dates), np.nan)
-        xpos = x + (i - (len(promos) - 1) / 2) * width
-
-        ax_bar.bar(xpos, np.nan_to_num(user_vals), width=width, alpha=0.45, label=f"{promo} (users)")
-        line, = ax_line.plot(x, cash_vals, marker="o", ms=4, lw=1.6, label=f"{promo} (cash)")
-
-        for j in range(len(dates)):
-            if j % LBL_STEP == 0:
-                uv, cv = user_vals[j], cash_vals[j]
-                if pd.notna(uv) and uv > 0:
-                    ax_bar.annotate(f"{int(uv)}", (xpos[j], uv), textcoords="offset points",
-                                    xytext=(0, 6), ha="center", va="bottom", fontsize=7, rotation=90)
-                if pd.notna(cv) and cv > 0:
-                    ax_line.annotate(f"{cv/1000:.0f}k", (x[j], cv), textcoords="offset points",
-                                     xytext=(0, 11), ha="center", fontsize=7,
-                                     color=line.get_color(), bbox=lbl_bbox)
-
-    ax_bar.set_title(f"C+ Annual — {arm}", fontsize=14, pad=14)
-    ax_bar.set_ylabel("Daily users", fontsize=11)
-    ax_line.set_ylabel("Daily cash (USD)", fontsize=11)
-    ax_bar.set_ylim(0, np.nanmax(np.nan_to_num(user_p.values)) * 1.45)
-    ax_line.set_ylim(0, np.nanmax(np.nan_to_num(cash_p.values)) * 1.45)
-    ax_bar.set_xticks(x[::LBL_STEP])
-    ax_bar.set_xticklabels([dates[k].strftime("%b %d") for k in range(0, len(dates), LBL_STEP)],
-                           rotation=45, ha="right", fontsize=9)
-    ax_line.legend(loc="upper left", fontsize=9, title="Cash")
-    ax_bar.legend(loc="upper right", fontsize=9, title="Users")
-
-fig.suptitle("C+ Annual daily cash (lines) and users (bars) from Apr 28, by experiment arm", fontsize=16, y=1.0)
-plt.tight_layout(h_pad=5)
-plt.show()
-```
-
 **Note on chart form:** this dual-axis (Cash-lines + Users-bars sharing one plot) version is the original pattern used during the live analysis. A later iteration of this work split Cash and Users into two separate single-axis line charts, Test vs Control, restricted to promo-only cash/users — since a dual y-axis chart makes trend comparisons harder to read correctly. Consider that split version as the preferred default going forward; keep this dual-axis version for the specific "full pricing-test-to-promo-end" directional view described above.
 
 ### Query 4 — Overall impact table: Cash, Users, Cash/User by Promo/Non-promo/Total × 3 periods × arm
 
+📄 [`queries/04_overall_impact_table.sql`](queries/04_overall_impact_table.sql)
+
 This is the query that powers the Section 4 output-contract table and the final USD impact calculation. Grain: `(arm, period)`, where `arm` ∈ {Control, Test} and `period` ∈ {Pre-promo, During early bird, After early bird}. For each combination it produces promo / non-promo / total cuts of Cash, Users, and Cash/User.
 
-Builds on the same `domain`, `high_pricing_test_users`, `base` CTEs as Queries 2–3:
-
-```sql
-WITH domain AS ( ... ),          -- Query 1 above
-high_pricing_test_users AS ( ... ),  -- Query 1 above
-base AS (
-  SELECT * FROM ( ... )          -- Query 2 above
-  WHERE rn1 = 1
-),
-cplus_annual AS (
-  SELECT *
-  FROM base
-  WHERE product_sub_type = 'C Plus annual'
-    AND hpt_flag IN ('true', 'false')      -- experiment population only
-)
-SELECT
-  CASE WHEN hpt_flag = 'true' THEN 'Control' ELSE 'Test' END AS arm,
-  CASE
-    WHEN transaction_dt < DATE'2026-06-08' THEN 'Pre-promo'
-    WHEN transaction_dt BETWEEN DATE'2026-06-08' AND DATE'2026-06-17' THEN 'During early bird'
-    ELSE 'After early bird'
-  END AS period,
-  -- Cash
-  ROUND(SUM(CASE WHEN Q2_2026_Tentpole_promo_flag = 1 THEN cash_receipt_usd_estimate ELSE 0 END),2) AS promo_cash,
-  ROUND(SUM(CASE WHEN Q2_2026_Tentpole_promo_flag = 0 THEN cash_receipt_usd_estimate ELSE 0 END),2) AS non_promo_cash,
-  ROUND(SUM(cash_receipt_usd_estimate),2) AS total_cash,
-  -- Users
-  COUNT(DISTINCT CASE WHEN Q2_2026_Tentpole_promo_flag = 1 THEN user_id END) AS promo_users,
-  COUNT(DISTINCT CASE WHEN Q2_2026_Tentpole_promo_flag = 0 THEN user_id END) AS non_promo_users,
-  COUNT(DISTINCT user_id) AS total_users,
-  -- Cash per user
-  ROUND(SUM(CASE WHEN Q2_2026_Tentpole_promo_flag = 1 THEN cash_receipt_usd_estimate ELSE 0 END)
-        / NULLIF(COUNT(DISTINCT CASE WHEN Q2_2026_Tentpole_promo_flag = 1 THEN user_id END),0),2) AS promo_cash_per_user,
-  ROUND(SUM(CASE WHEN Q2_2026_Tentpole_promo_flag = 0 THEN cash_receipt_usd_estimate ELSE 0 END)
-        / NULLIF(COUNT(DISTINCT CASE WHEN Q2_2026_Tentpole_promo_flag = 0 THEN user_id END),0),2) AS non_promo_cash_per_user,
-  ROUND(SUM(cash_receipt_usd_estimate) / NULLIF(COUNT(DISTINCT user_id),0),2) AS total_cash_per_user
-FROM cplus_annual
-GROUP BY 1, 2
-ORDER BY arm, MIN(transaction_dt);
-```
+Builds on the same `domain`, `high_pricing_test_users`, `base` CTEs as Queries 2–3.
 
 **Joins:** unchanged from Query 2 — this query doesn't add any new joins, it re-aggregates `base`/`cplus_annual` at a coarser grain.
 
@@ -421,65 +164,9 @@ ORDER BY arm, MIN(transaction_dt);
 
 ### Query 5 — Channel registration split, Test vs Control (the 50:50 sense check)
 
-Of all the users who were impressed during the experiment, what was the channel registration breakup? Captures L0 marketing-channel categorization (Paid, Organic) and the split of impressed users between Test and Control within each channel. **This is the pitfall-list check** ("check if the traffic split between test and control was 50:50") applied at channel granularity, not just in aggregate — a channel-level imbalance can hide inside an overall 50:50 split.
+📄 [`queries/05_channel_split_check.sql`](queries/05_channel_split_check.sql)
 
-```sql
-WITH variants AS (
-      SELECT
-        -- Experiment metadata.
-        epic_experiment_id
-        , epic_experiment_started_at
-        , epic_experiment_ended_ts
-        , MAX(COALESCE(epic_experiment_ended_ts, CURRENT_DATE)) OVER () AS end_ts
-        , epic_experiment_display_name
-        -- Variant metadata.
-        , epic_variant_id
-        , epic_variant_weight
-        , TRIM(REGEXP_REPLACE(epic_variant_name, '', '')) AS cleaned_epic_variant_name
-        ,
-        (MAX(CASE WHEN epic_variant_index = 0 AND epic_experiment_id = 'kEs8FDkHEfGErBK2XQAA3w' THEN 1 ELSE 0 END)
-        OVER (PARTITION BY TRIM(REGEXP_REPLACE(epic_variant_name, '', ''))))::BOOLEAN
-         AS is_control
-        -- Get the order of variants. Order same as EPIC unless control is manually set, in which case control is put first.
-        , CASE
-        WHEN is_control THEN 1
-        ELSE -MIN(epic_variant_index) OVER (PARTITION BY TRIM(REGEXP_REPLACE(epic_variant_name, '', '')))
-        END AS sort_by
-      FROM prod.bi.epic_variants
-      JOIN prod.bi.epic_experiments USING (epic_experiment_id)
-      WHERE (
-      epic_experiment_id = 'kEs8FDkHEfGErBK2XQAA3w'
-      )
-      AND epic_experiment_allocation_type = 'BY_USER'
-      ),
-cohort_users_details AS (
-      SELECT
-        is_control
-        , user_id
-        -- Get impression start and end timestamps for metrics calculations. This includes users
-        , MIN(impression_ts) AS start_ts,
-          MAX(end_ts) AS end_ts
-      FROM prod.bi.epic_user_impressions
-      JOIN variants USING (epic_experiment_id, epic_variant_id)
-      WHERE
-        impression_dt BETWEEN epic_experiment_started_at::DATE AND COALESCE(epic_experiment_ended_ts::DATE, CURRENT_DATE) -- speeds up the computation
-        AND impression_ts BETWEEN epic_experiment_started_at AND COALESCE(epic_experiment_ended_ts, CURRENT_DATE)
-        AND 1=1 -- no filter on 'impressions.impression_date'
-      GROUP BY 1, 2),
-channel_impression_user_level_data AS (
-SELECT a.*,
-       b.registration_referrer_cons_l0_mktg_chnl_ft14d
-FROM cohort_users_details a
-LEFT JOIN (SELECT DISTINCT user_id,registration_referrer_cons_l0_mktg_chnl_ft14d
-           FROM prod.gold.user_stats_vw
-           WHERE user_id IN (SELECT DISTINCT user_id FROM cohort_users_details))b
-ON a.user_id=b.user_id)
-SELECT registration_referrer_cons_l0_mktg_chnl_ft14d AS L0_channel,
-       is_control,
-       COUNT(DISTINCT user_id) AS user_count
-FROM channel_impression_user_level_data GROUP BY 1,2
-ORDER BY 1 DESC, 2
-```
+Of all the users who were impressed during the experiment, what was the channel registration breakup? Captures L0 marketing-channel categorization (Paid, Organic) and the split of impressed users between Test and Control within each channel. **This is the pitfall-list check** ("check if the traffic split between test and control was 50:50") applied at channel granularity, not just in aggregate — a channel-level imbalance can hide inside an overall 50:50 split.
 
 **Joins:**
 - `cohort_users_details` is the same "impressed users, is_control + impression window" logic as Query 1 (renamed here from an anonymous final `SELECT` to a named CTE).
@@ -489,108 +176,12 @@ ORDER BY 1 DESC, 2
 
 ### Query 6 — Final output table with two sensitivity nuances baked in
 
+📄 [`queries/06_impact_table_isolated_nuances.sql`](queries/06_impact_table_isolated_nuances.sql)
+
 Same output table as Query 4 (`arm × period`, Cash/Users/Cash-per-user split promo/non-promo/total), plus a `channel` cut, but with **two nuances baked into the filters** to sharpen the isolation:
 
 1. **Capped at the pricing test's own end date (6/24), not the promo end** — restricts the window to strictly isolate the test's effect, rather than running through the full promo (which the EPIC-stickiness caveat means could otherwise blend in behavior after the test's official tagging window closes).
 2. **Excludes the last 3 days of Early Bird (6/15–6/17)** — those days carry urgency messaging in the promo banners, which skews the numbers. Excluding them makes "During early bird" and "After early bird" an apples-to-apples comparison. **Dates here are use-case specific** and will change per test/promo.
-
-```sql
-with domain as ( ... ),                    -- Query 1 above
-high_pricing_test_users AS ( ... ),         -- Query 1 above
- base AS (
-  SELECT * FROM (
-SELECT
-    CAST(COALESCE(CAST(hpt.is_control AS STRING),'non-high_pricing_test_population') AS STRING) AS hpt_flag,
-    ab.*,
-    hpt.start_ts AS hpt_start_ts,
-    hpt.end_ts AS hpt_end_ts,
-    b.country_group_finance,
-    first_payment_referrer_cons_l0_mktg_chnl_ft28d as channel,
-    COALESCE(b1.product_sub_type, ab.underlying_product_type) AS product_sub_type,
-    d.is_cplus_upsell,
-    DATE(ab.transaction_ts) AS transaction_dt,
-    a.payment_order,
-    recurring_payment_start_ts,
-    recurring_payment_end_ts,
-    a.subscription_id,
-    a.subscription_status,
-    a.is_subscription_active,
-    cc1.promotion_name,
-    cc1.promotion_id,
-    CASE WHEN cc1.promotion_id IN (287767, 287768, 287769, 287771, 287775) THEN 1 ELSE 0 END AS Q2_2026_Tentpole_promo_flag,
-    subscription_cancel_ts,
-    subscription_inactivation_ts,
-    f.country_cd,
-    CASE
-        WHEN primary_domain IS NULL THEN 'Others'
-        ELSE primary_domain
-    END AS primary_domain,
-    COALESCE(subscription_cancel_ts, subscription_inactivation_ts) AS subscription_end_ts,
-    ROW_NUMBER() OVER (PARTITION BY ab.transaction_id ORDER BY ab.transaction_ts ASC) AS rn1
-FROM prod.gold.transactions_vw ab
-LEFT JOIN prod.gold.completed_carts_vw cc1
-    ON ab.user_id = cc1.user_id
-    AND ab.cart_id = cc1.cart_id
-LEFT JOIN prod.gold.users_vw f
-    ON ab.user_id = f.user_id
-LEFT JOIN prod.silver_base.static_countries b
-    ON f.country_cd = b.country_cd
-LEFT JOIN prod.bi.subscription_payments a
-    ON a.user_id = ab.user_id
-    AND a.transaction_id = ab.transaction_id
-LEFT JOIN prod.bi.subscriptions bs
-    ON a.user_id = bs.user_id
-    AND a.subscription_id = bs.subscription_id
-LEFT JOIN prod.bi.subscriptions__payment_stats d
-    ON a.user_id = d.user_id
-    AND a.subscription_id = d.subscription_id
-LEFT JOIN domain pt
-    ON a.underlying_product_item_id = pt.underlying_product_item_id
-LEFT JOIN prod.bi.products_detail b1
-    ON ab.product_item_id = b1.product_item_id
-    AND ab.product_type = b1.product_type
-LEFT JOIN high_pricing_test_users hpt ON ab.user_id = hpt.user_id AND ab.transaction_ts between hpt.start_ts AND hpt.end_ts
-LEFT JOIN prod.gold.user_stats_vw us ON ab.user_id=us.user_id
-WHERE transaction_type = 'BUY'
-    AND NOT was_buy_transaction_refunded
-    AND transaction_business_line = 'B2C'
-    AND DATE(ab.transaction_ts) <= (CAST(DATE_FORMAT(CAST('2026-06-24' AS DATE), 'yyyy-MM-dd') AS DATE))
-    AND DATE(ab.transaction_ts) NOT between (CAST(DATE_FORMAT(CAST('2026-06-15' AS DATE), 'yyyy-MM-dd') AS DATE)) AND (CAST(DATE_FORMAT(CAST('2026-06-17' AS DATE), 'yyyy-MM-dd') AS DATE))
-    AND DATE(ab.transaction_ts) >= (CAST(DATE_FORMAT(CAST('2026-04-28' AS DATE), 'yyyy-MM-dd') AS DATE)))
-    WHERE rn1=1
-),
-cplus_annual AS (
-  SELECT *
-  FROM base
-  WHERE product_sub_type = 'C Plus annual'
-    AND hpt_flag IN ('true', 'false')      -- experiment population only
-)
-SELECT
-  CASE WHEN hpt_flag = 'true' THEN 'Control' ELSE 'Test' END AS arm,
-  channel,
-  CASE
-    WHEN transaction_dt < DATE'2026-06-08' THEN 'Pre-promo'
-    WHEN transaction_dt BETWEEN DATE'2026-06-08' AND DATE'2026-06-17' THEN 'During early bird'
-    ELSE 'After early bird'
-  END AS period,
-  -- Cash
-  ROUND(SUM(CASE WHEN Q2_2026_Tentpole_promo_flag = 1 THEN cash_receipt_usd_estimate ELSE 0 END),2) AS promo_cash,
-  ROUND(SUM(CASE WHEN Q2_2026_Tentpole_promo_flag = 0 THEN cash_receipt_usd_estimate ELSE 0 END),2) AS non_promo_cash,
-  ROUND(SUM(cash_receipt_usd_estimate),2) AS total_cash,
-  -- Users
-  COUNT(DISTINCT CASE WHEN Q2_2026_Tentpole_promo_flag = 1 THEN user_id END) AS promo_users,
-  COUNT(DISTINCT CASE WHEN Q2_2026_Tentpole_promo_flag = 0 THEN user_id END) AS non_promo_users,
-  COUNT(DISTINCT user_id) AS total_users,
-  -- Cash per user
-  ROUND(SUM(CASE WHEN Q2_2026_Tentpole_promo_flag = 1 THEN cash_receipt_usd_estimate ELSE 0 END)
-        / NULLIF(COUNT(DISTINCT CASE WHEN Q2_2026_Tentpole_promo_flag = 1 THEN user_id END),0),2) AS promo_cash_per_user,
-  ROUND(SUM(CASE WHEN Q2_2026_Tentpole_promo_flag = 0 THEN cash_receipt_usd_estimate ELSE 0 END)
-        / NULLIF(COUNT(DISTINCT CASE WHEN Q2_2026_Tentpole_promo_flag = 0 THEN user_id END),0),2) AS non_promo_cash_per_user,
-  ROUND(SUM(cash_receipt_usd_estimate) / NULLIF(COUNT(DISTINCT user_id),0),2) AS total_cash_per_user
-FROM cplus_annual
-GROUP BY 1, 2, 3
-ORDER BY arm, MIN(transaction_dt);
-```
 
 **What changed vs Query 4:**
 - Upper date bound: `<= '2026-06-24'` (test end) instead of `<= CURRENT_DATE - 2`.
@@ -604,39 +195,9 @@ ORDER BY arm, MIN(transaction_dt);
 
 ### Query 7 — Trendline graph with Query 6's nuances baked in
 
+📄 [`queries/07_trendline_isolated_nuances.sql`](queries/07_trendline_isolated_nuances.sql) — Python plotting reuses [`queries/03_trendline_full_window.py`](queries/03_trendline_full_window.py) unchanged, no separate file needed since the plotting logic is identical.
+
 Same chart shape as Query 3 (dual-axis Cash-lines + Users-bars, one subplot per arm, Early Bird shaded), but applied to Query 6's isolation nuances — capped at the pricing test's own end date and with the urgency-messaging days excluded — to see the same effect visually rather than just in the table.
-
-```sql
-WITH domain AS ( ... ),                    -- Query 1 above
-high_pricing_test_users AS ( ... ),        -- Query 1 above
-base AS (
-  SELECT * FROM (
-    ...                                    -- same SELECT/joins as Query 3's base
-  )
-  WHERE rn1 = 1
-    -- date filters, differing from Query 3:
-    -- AND DATE(ab.transaction_ts) <= CURRENT_DATE - 2
-    -- AND DATE(ab.transaction_ts) <= (CAST(DATE_FORMAT(CAST('2026-06-24' AS DATE), 'yyyy-MM-dd') AS DATE))
-    -- AND DATE(ab.transaction_ts) NOT BETWEEN (CAST(DATE_FORMAT(CAST('2026-06-15' AS DATE), 'yyyy-MM-dd') AS DATE)) AND (CAST(DATE_FORMAT(CAST('2026-06-17' AS DATE), 'yyyy-MM-dd') AS DATE))
-    -- AND DATE(ab.transaction_ts) >= (CAST(DATE_FORMAT(CAST('2026-04-28' AS DATE), 'yyyy-MM-dd') AS DATE))
-),
-cplus_annual AS (
-  SELECT * FROM base
-  WHERE product_sub_type = 'C Plus annual'
-    AND hpt_flag IN ('true', 'false')
-)
-SELECT
-  transaction_dt,
-  CASE WHEN hpt_flag = 'true' THEN 'Control' ELSE 'Test' END AS arm,
-  CASE WHEN promotion_id IS NOT NULL AND Q2_2026_Tentpole_promo_flag = 1 THEN 'Promo' ELSE 'Non-promo' END AS promo_status,
-  ROUND(SUM(cash_receipt_usd_estimate), 2) AS cash,
-  COUNT(DISTINCT user_id) AS users
-FROM cplus_annual
-GROUP BY 1, 2, 3
-ORDER BY transaction_dt, arm, promo_status
-```
-
-Python plotting logic is identical to Query 3 — same pivot-and-plot structure, same Early Bird shading, same dual-axis-per-arm layout. See Query 3 for the full code.
 
 **Differences vs Query 3's date filters:**
 - Adds the `<= '2026-06-24'` test-end cap alongside the pre-existing `<= CURRENT_DATE - 2` (the latter is now redundant here since 6/24 already predates `CURRENT_DATE - 2`, but harmless left in).
