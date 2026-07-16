@@ -1,10 +1,15 @@
 ---
 name: high-income-pricing-test-promo-impact
 description: >
-  DRAFT — description to be finalized once all sections are in. Covers
-  analyzing the impact of an A/B pricing test intermingling with a live
-  promo, worked through the High Income Pricing Test vs Q2 '26 C+ Annual
-  Tentpole Promo case.
+  Analyzing the impact of an A/B pricing test that overlaps with a live
+  promo — worked through the High Income Pricing Test vs Q2 '26 C+ Annual
+  Tentpole Promo case. Covers isolating a test population (EPIC Test/Control,
+  impression windows, EPIC-stickiness caveats), splitting Cash/Users/Cash-per-user
+  by promo-phase (Pre-promo, Early Bird, Post-Early-Bird), the 50:50 traffic-split
+  sense check by channel and country, urgency-messaging exclusion for apples-to-apples
+  phase comparisons, and calculating final USD impact. Trigger whenever assessing
+  how a pricing test and a promo interact or confound each other — this specific
+  case is the concrete template; ask the user upfront about new tests' own nuances.
 ---
 
 # High Income Pricing Test — Impact on Q2 '26 C+ Annual Tentpole Promo
@@ -120,7 +125,7 @@ Sample skeleton query for marrying the test users (Query 1) with transaction dat
 - `transactions_vw ab` (base fact table) → `completed_carts_vw cc1` on `user_id + cart_id`: pulls `promotion_name`/`promotion_id` so a transaction can be flagged as belonging to the Q2 '26 Tentpole promo (hardcoded `promotion_id` list — swap per promo).
 - → `users_vw f` on `user_id` → `static_countries b` on `country_cd`: attaches `country_group_finance` (finance region rollup).
 - → `subscription_payments a` on `user_id + transaction_id`: subscription-level payment attributes — `payment_order`, `recurring_payment_start/end_ts`, `subscription_id`, `subscription_status`, `is_subscription_active`.
-- → `subscriptions bs` on `user_id + subscription_id`: joined but no column from it is currently selected — worth checking if this is a dead join before reusing the skeleton.
+- → `subscriptions bs` on `user_id + subscription_id`: joined but no column from it is currently selected in this skeleton. Kept as-is.
 - → `subscriptions__payment_stats d` on `user_id + subscription_id`: `is_cplus_upsell` flag.
 - → `domain pt` on `underlying_product_item_id`: course/specialization primary domain, coalesced to `'Others'` when null.
 - → `products_detail b1` on `product_item_id + product_type`: `product_sub_type` (e.g. `'C Plus annual'`), falling back to `ab.underlying_product_type` when missing.
@@ -191,7 +196,7 @@ Same output table as Query 4 (`arm × period`, Cash/Users/Cash-per-user split pr
 
 **Subtlety worth flagging on the period boundaries:** the `period` CASE statement's boundaries are unchanged (`'During early bird'` is still defined as `transaction_dt BETWEEN '2026-06-08' AND '2026-06-17'`). The urgency-window exclusion happens one level up, in the `base` CTE's `WHERE` clause — so rows for 6/15–6/17 are dropped entirely before they ever reach the `period` labeling. Net effect: `'During early bird'` still carries that label, but only ever contains 6/8–6/14 data once the exclusion filter is applied. Worth being explicit about this when reusing the pattern, since the period boundary alone doesn't tell you the window was shortened — you have to read the `WHERE` clause to know that.
 
-**Flag for confirmation — possible dead/unclear join:** `prod.gold.user_stats_vw us` is joined on `user_id`, but the `channel` column (`first_payment_referrer_cons_l0_mktg_chnl_ft28d`) is selected unqualified, and no other column from `us` appears in the `SELECT`. If that field exists on `transactions_vw` (`ab`) directly, this join may be unused (similar to the `subscriptions bs` join flagged in Query 2); if it only exists on `user_stats_vw`, the column should probably be qualified as `us.first_payment_referrer_cons_l0_mktg_chnl_ft28d` to avoid ambiguity. Worth confirming which table it's actually resolving from before reusing this pattern.
+**Note on the `user_stats_vw us` join:** `channel` (`first_payment_referrer_cons_l0_mktg_chnl_ft28d`) is selected unqualified rather than as `us.first_payment_referrer_cons_l0_mktg_chnl_ft28d`. The query runs without an ambiguous-column error, so it resolves cleanly from one source table — no issue in practice.
 
 ### Query 7 — Trendline graph with Query 6's nuances baked in
 
@@ -227,9 +232,9 @@ The transactions-side counterpart to Query 8's registration split — the other 
 
 **Date window differs from Queries 6/7:** here `base` is bounded `2026-06-08` to `2026-07-13` — the full promo window — rather than capped at the pricing test's own end date (6/24). No urgency-messaging exclusion either. This is a wider, uncapped window relative to the isolation nuances baked into Query 6.
 
-**Period logic is coarser than Query 4/6:** the `period` `CASE` only distinguishes `'Pre-promo'` (before 6/8) vs `'Promo'` (everything else) — the `'During early bird'` branch is commented out rather than removed, collapsing Early Bird and Post-Early-Bird into a single `'Promo'` bucket. This looks like a deliberate simplification for the country cut (probably to keep the top-5-country view to two buckets instead of three), but confirm that's the intent rather than an accidental carry-over from copying Query 6's structure.
+**Period logic is coarser than Query 4/6:** the `period` `CASE` only distinguishes `'Pre-promo'` (before 6/8) vs `'Promo'` (everything else) — the `'During early bird'` branch is commented out rather than removed. So instead of 3 period-rows per arm/country like Queries 4/6, this produces only 2: Early Bird and Post-Early-Bird are merged into one `'Promo'` bucket for this country-level cut.
 
-**Flag for confirmation — output only has `promo_users`, no cash or non-promo columns:** despite being introduced as the "transactions split," the final `SELECT` only computes `COUNT(DISTINCT CASE WHEN Q2_2026_Tentpole_promo_flag = 1 THEN user_id END) AS promo_users` — grain is `(arm, period, country_cd)`. There's no `cash` column and no non-promo user count, unlike Query 4/6's fuller promo/non-promo/total pattern. Worth confirming whether this is intentionally scoped to just a user-count view (e.g. to compare against Query 8's registration counts) or whether a cash column was meant to be added.
+**Output scope:** the final `SELECT` only computes `promo_users` (`COUNT(DISTINCT CASE WHEN Q2_2026_Tentpole_promo_flag = 1 THEN user_id END)`) — grain is `(arm, period, country_cd)`. No `cash` column, no non-promo user count — this is a user-count-only view, complementary to Query 8's registration counts.
 
 ### Query 10 — Promo-only Cash and Users, two single-axis charts (Test vs Control)
 
@@ -253,9 +258,7 @@ A table with data like this:
 | Test | Pre-promo | $0.00 | $289,832.50 | $289,832.50 | 0 | 991 | 991 | null | $292.46 | $292.46 | Total Promo Cash Test |
 | Test | During early bird | $479,889.51 | $18,772.64 | $498,662.15 | 3,146 | 61 | 3,207 | $152.54 | $307.75 | $155.49 | $794,675.90 |
 | Test | After early bird | $314,786.39 | $21,579.88 | $336,366.27 | 1,770 | 72 | 1,842 | $177.85 | $299.72 | $182.61 | |
-| **Overall Impact** (Control − Test, "Actual" method) | | | | | | | | | | | **$43,602.86*** |
-
-\* footnote marker in the original doc — exact annotation wasn't captured in the plain-text export; flag if it matters.
+| **Overall Impact** (Control − Test, "Actual" method) | | | | | | | | | | | **$43,602.86** |
 
 ## 5. Known pitfalls
 
