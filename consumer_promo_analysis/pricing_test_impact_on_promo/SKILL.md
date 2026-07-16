@@ -205,6 +205,20 @@ Same chart shape as Query 3 (dual-axis Cash-lines + Users-bars, one subplot per 
 
 **Chart-reuse caveat — silent x-axis gap:** `dates` is built from `sorted(df["transaction_dt"].unique())`, i.e. only the dates that actually appear in the query result. Since 6/15–6/17 are excluded entirely at the SQL level (not zeroed out, genuinely absent), those three dates won't appear in `dates` at all — the x-axis will jump directly from Jun 14 to Jun 18 with no visual gap or marker indicating days were dropped. The Early Bird shading still lands correctly on the surviving dates (6/8–6/14), so it isn't misleading on that front, but anyone reading the chart without knowing about the exclusion could mistake Jun 14 and Jun 18 as adjacent days. Worth adding an explicit annotation or gap marker if this chart is shared outside the immediate analysis.
 
+### Query 8 — Country-level registration split, Test vs Control
+
+📄 [`queries/08_country_split_check.sql`](queries/08_country_split_check.sql)
+
+Country-level split of registrations in Test and Control — part of the "country level breakdown at the traffic split" nuance from Section 2. Structurally identical to Query 5's channel split check, just cutting by `user_country_cd` instead of L0 channel.
+
+**Joins:** same `variants` → `cohort_users_details` (impressed-user, is_control + impression window logic from Query 1) → LEFT JOIN a `user_stats_vw` subquery (pre-filtered to the experiment's impressed population) for `user_country_cd`, matched on `user_id`.
+
+**Logic:** groups by `(country, is_control)`, counts distinct `user_id`. Same 50:50 sense-check purpose as Query 5, at country granularity instead of channel.
+
+**Naming leftover worth flagging:** the join CTE is still named `channel_impression_user_level_data`, copied over from Query 5, even though it now carries country data rather than channel data. Harmless, but worth renaming if this pattern gets reused again (e.g. to `country_impression_user_level_data`) to avoid confusion.
+
+**Sort order differs from Query 5:** `ORDER BY 1, 2, 3 DESC` (country ascending, is_control ascending, user_count descending) vs Query 5's `ORDER BY 1 DESC, 2` (channel descending, is_control ascending, no sort on count). Worth confirming which order you actually want when reading results — this one surfaces the largest user-count row first within each `(country, is_control)` grouping, which only matters if a country has more than 2 rows (it shouldn't, since `is_control` only has 2 values, so the 3rd sort key is mostly inert here).
+
 ## 4. Output contract
 
 A table with data like this:
