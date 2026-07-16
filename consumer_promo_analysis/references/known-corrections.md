@@ -81,3 +81,32 @@ you're joining to an explicit campaign_map of known-good promotion_ids (none of 
   path, and an operator-precedence issue in a CASE expression (`A AND B or C` parses as
   `(A AND B) OR C`, not `A AND (B OR C)`). Cross-check any borrowed query's logic against the data
   before trusting its output, the same way you'd check your own.
+- **A campaign's assumed end date (from initial discovery) can go stale — always quote the
+  observed min/max transaction date alongside results.** June Tentpole 2026 was initially assumed
+  to end 7/13 (from an early profiling pass); its actual last redemption was 7/14. Because the
+  hardcoded end date was baked into the SKU-fallback date-range logic (see correction #2 above),
+  results looked "final" on 7/15 but were still silently missing 7/14's data — the 2-day
+  reconciliation trim, not the wrong end date, was the actual constraint at that point, which
+  made the gap easy to miss. Rather than fully automating a dynamic end-date lookup (which has its
+  own failure mode — a single stray late transaction on an old `promotion_id` could inflate a
+  derived window and cause the SKU-fallback logic to misattribute unrelated later transactions),
+  the fix adopted: **derive each campaign's window dynamically** (a `march_window`/`june_window`
+  CTE computing `MIN`/`MAX(transaction_ts)` per campaign) instead of hardcoding it, so the window
+  self-corrects on every run. This works cleanly for `transactions`/`completed_carts`-only queries
+  (base metrics, region, channel) — see `q2_tentpole_base_metrics.sql` for the pattern.
+- **For any query that also joins the Amplitude events table, do NOT embed the dynamic window as
+  a subquery/CTE in the same query — split it into two steps instead.** Tried embedding
+  `CROSS JOIN june_window` (a CTE computing the window) directly into a query that also joins
+  `consolidated_amplitude_v3_events_vw` on `event_date` — it did not complete even after ~10
+  minutes (same symptom as the original "Amplitude joins need tight date bounds" issue, despite
+  a window CTE being present). Likely cause: Databricks can only use a **literal** value for
+  partition pruning on `event_date` at plan time — a bound computed from another table at runtime
+  isn't available early enough to prune partitions, so the query scans far more than it needs to.
+  **Fix: resolve the window with a small, fast, standalone query first (touches only
+  `transactions`/`completed_carts`, completes in seconds), then paste those concrete dates as
+  literals into the Amplitude-joined query.** This keeps the "don't hardcode a stale assumption"
+  benefit (the window is freshly resolved from data every time, not typed from memory) while
+  avoiding the specific SQL construct that breaks partition pruning. Confirmed: the same query
+  with literal dates from a fresh resolve completed in under a minute; with the dynamic CTE
+  embedded, it didn't complete in 10+. See `q2_page_level_split_2_3.sql`'s header for the
+  two-step process this produced.

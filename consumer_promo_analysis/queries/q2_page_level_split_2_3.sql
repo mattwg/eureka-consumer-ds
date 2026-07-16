@@ -37,14 +37,32 @@
 --      xdp_paid_media, xdp_project) plus a couple of Annual-specific ones
 --      (cplus_description, promo_template, search_result_page).
 --
--- PERFORMANCE NOTE: a single query joining all 4 campaigns' redeemers to
--- Amplitude in one UNION ALL did not complete even after ~10 minutes of
--- polling. Running one campaign at a time (each with a tight event_date
--- bound = campaign window + 7-day lookback) completed in under a minute
--- each. The query below is written as 4 UNION ALL blocks for a single
--- reusable artifact, but if re-running, expect to need to run each block
--- separately (see the split, per-campaign queries used to validate results
--- during this session) if the combined version times out again.
+-- PERFORMANCE NOTE (two-step process required for the Amplitude join): a
+-- single query joining all 4 campaigns' redeemers to Amplitude in one UNION
+-- ALL did not complete even after ~10 minutes. Running one campaign at a
+-- time (tight event_date bound = campaign window + 7-day lookback) completed
+-- in under a minute each -- but ONLY when that bound is a LITERAL date, not
+-- a value derived from a CTE/subquery in the same query. Databricks appears
+-- unable to use a runtime-computed bound for partition pruning on
+-- `event_date`, so embedding `(SELECT end_date FROM june_window)` directly in
+-- this query's WHERE clause reintroduced the same 10+ minute non-completion,
+-- even though the window CTE itself resolves fast. See known-corrections.md.
+--
+-- REQUIRED PROCESS when re-running the March/June blocks below:
+--   Step 1 (fast, seconds): resolve the current window --
+--     SELECT MIN(DATE(ab.transaction_ts)) AS start_date, MAX(DATE(ab.transaction_ts)) AS end_date
+--     FROM prod.gold_base.transactions ab
+--     INNER JOIN prod.gold_base.completed_carts cc ON ab.user_id = cc.user_id AND ab.cart_id = cc.cart_id
+--     WHERE cc.promotion_id IN (<campaign's promotion_ids, per campaign_map>)
+--       AND ab.transaction_type = 'BUY' AND NOT ab.was_buy_transaction_refunded
+--       AND ab.transaction_business_line = 'B2C'
+--   Step 2: paste the resulting start_date/end_date as LITERALS into the
+--     March/June `impressions` blocks' `event_date BETWEEN ...` bound below
+--     (start_date minus 7 days for the lookback buffer) before running.
+-- The `redeemers` CTE's own dynamic march_window/june_window (used for the
+-- SKU-fallback campaign tagging) is fine as-is -- it only touches
+-- transactions/completed_carts, never Amplitude, so it doesn't hit this
+-- partition-pruning issue.
 -- ============================================================================
 
 WITH campaign_map AS (
@@ -57,6 +75,24 @@ WITH campaign_map AS (
         (287771, 'June Tentpole 2026'), (287769, 'June Tentpole 2026'), (290356, 'June Tentpole 2026'), (290357, 'June Tentpole 2026')
     AS t(promotion_id, campaign)
 ),
+-- Dynamically derived campaign windows (NOT hardcoded) -- see
+-- q2_tentpole_base_metrics.sql for why a hardcoded date went stale before.
+march_window AS (
+    SELECT MIN(DATE(ab.transaction_ts)) AS start_date, MAX(DATE(ab.transaction_ts)) AS end_date
+    FROM prod.gold_base.transactions ab
+    INNER JOIN prod.gold_base.completed_carts cc ON ab.user_id = cc.user_id AND ab.cart_id = cc.cart_id
+    WHERE cc.promotion_id IN (279246, 278665, 281016, 279263, 283280)
+      AND ab.transaction_type = 'BUY' AND NOT ab.was_buy_transaction_refunded
+      AND ab.transaction_business_line = 'B2C'
+),
+june_window AS (
+    SELECT MIN(DATE(ab.transaction_ts)) AS start_date, MAX(DATE(ab.transaction_ts)) AS end_date
+    FROM prod.gold_base.transactions ab
+    INNER JOIN prod.gold_base.completed_carts cc ON ab.user_id = cc.user_id AND ab.cart_id = cc.cart_id
+    WHERE cc.promotion_id IN (287775, 287768, 287767, 287771, 287769, 290356, 290357)
+      AND ab.transaction_type = 'BUY' AND NOT ab.was_buy_transaction_refunded
+      AND ab.transaction_business_line = 'B2C'
+),
 redeemers AS (
     SELECT
         ab.transaction_id, ab.user_id, ab.transaction_ts, ab.cash_receipt_usd_estimate,
@@ -66,16 +102,18 @@ redeemers AS (
                 WHEN b1.product_sub_type = 'C Plus annual'
                      AND ab.product_item_id = 'GMM31Io6RjODN9SKOuYz_A'
                      AND cc.promotion_id IS NULL
-                     AND DATE(ab.transaction_ts) BETWEEN '2026-03-24' AND '2026-04-29'
+                     AND DATE(ab.transaction_ts) BETWEEN mw.start_date AND mw.end_date
                     THEN 'March Tentpole 2026'
                 WHEN b1.product_sub_type = 'C Plus annual'
                      AND ab.product_item_id = 'GMM31Io6RjODN9SKOuYz_A'
                      AND cc.promotion_id IS NULL
-                     AND DATE(ab.transaction_ts) BETWEEN '2026-06-05' AND '2026-07-13'
+                     AND DATE(ab.transaction_ts) BETWEEN jw.start_date AND jw.end_date
                     THEN 'June Tentpole 2026'
             END
         ) AS campaign
     FROM prod.gold_base.transactions ab
+    CROSS JOIN march_window mw
+    CROSS JOIN june_window jw
     INNER JOIN prod.gold_base.completed_carts cc
         ON ab.user_id = cc.user_id AND ab.cart_id = cc.cart_id
     LEFT JOIN campaign_map cm ON cc.promotion_id = cm.promotion_id
@@ -124,6 +162,8 @@ impressions AS (
         AND ae.client_event_time <= r.transaction_ts
         AND ae.client_event_time >= r.transaction_ts - INTERVAL 7 DAYS
     WHERE r.campaign = 'March Tentpole 2026'
+      -- LITERAL dates, resolved via the Step 1 query in the header note above
+      -- (last resolved 2026-07-16: start_date=2026-03-24, end_date=2026-04-29)
       AND ae.event_date BETWEEN '2026-03-17' AND '2026-04-29'
       AND (ae.event_type = 'ViewMerchandisingModule'
            OR (ae.event_type = 'ViewPage' AND ae.event_properties.`page.url` ILIKE 'https://www.coursera.org/courseraplus%'))
@@ -137,7 +177,9 @@ impressions AS (
         AND ae.client_event_time <= r.transaction_ts
         AND ae.client_event_time >= r.transaction_ts - INTERVAL 7 DAYS
     WHERE r.campaign = 'June Tentpole 2026'
-      AND ae.event_date BETWEEN '2026-05-29' AND '2026-07-13'
+      -- LITERAL dates, resolved via the Step 1 query in the header note above
+      -- (last resolved 2026-07-16: start_date=2026-06-05, end_date=2026-07-14)
+      AND ae.event_date BETWEEN '2026-05-29' AND '2026-07-14'
       AND (ae.event_type = 'ViewMerchandisingModule'
            OR (ae.event_type = 'ViewPage' AND ae.event_properties.`page.url` ILIKE 'https://www.coursera.org/courseraplus%'))
 ),
@@ -189,13 +231,14 @@ ORDER BY r.campaign, redemptions DESC;
 --   search_result_page 26 / $4,589 | promo_template 24 / $5,437
 --   entity_query_page 5 / $886 | career_academy 2 / $393 | role_description_page 2 / $377
 --
--- June Tentpole 2026 (total 47,891 -- ~4 off from base's 47,895, expected
--- reconciliation-lag drift, not a bug):
---   cplus_description 26,680 / $4,129,491 | lohp 5,136 / $877,118
---   xdp_course 4,398 / $695,177             | xdp_professional_cert 4,161 / $625,054
---   xdp_s12n 3,298 / $516,047                | Direct/No Attribution 1,992 / $338,853
---   xdp_paid_media 1,424 / $288,033          | lihp 474 / $74,025
---   browse 135 / $22,902 | xdp_project 123 / $18,578 | C+ Page 70 / $12,343
+-- June Tentpole 2026 (FINAL, re-pulled 2026-07-16 with the corrected 7/14 end
+-- date -- total 52,201, matches base metrics exactly; up from the 2026-07-15
+-- pull's total of 51,519, which was still missing 7/14's data):
+--   cplus_description 29,054 / $4,549,527 | lohp 5,869 / $1,016,317
+--   xdp_course 4,694 / $747,312             | xdp_professional_cert 4,459 / $674,023
+--   xdp_s12n 3,577 / $563,864                | Direct/No Attribution 2,148 / $371,021
+--   xdp_paid_media 1,535 / $311,950          | lihp 503 / $79,387
+--   browse 147 / $25,079 | xdp_project 130 / $19,861 | C+ Page 85 / $15,272
 --
 -- Pattern across all 4 campaigns: "cplus_description" (the C+ plan-detail
 -- page) dominates page-level attribution by a wide margin, followed by lohp

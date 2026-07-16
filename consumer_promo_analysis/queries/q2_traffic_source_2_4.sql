@@ -56,6 +56,13 @@
 -- numbers: NPL Organic 8,395 / $224,890, NPL Paid 9,903 / $264,630,
 -- Non-NPL Organic 5,891 / $168,223, Non-NPL Paid 2,848 / $77,769,
 -- Non-NPL (null channel) 42 / $887. Other 3 campaigns unaffected.
+--
+-- UPDATE 2026-07-16: June Tentpole 2026 re-pulled with the dynamically-derived
+-- window (TRUE final, correcting a stale hardcoded 7/13 end date -- see
+-- known-corrections.md): NPL Organic 17,567 / $2,863,924, NPL Paid 18,693 /
+-- $2,865,690, Non-NPL Organic 11,282 / $1,902,980, Non-NPL Paid 4,659 /
+-- $741,020. Total 52,201, matches final base metrics exactly. (Up from the
+-- 2026-07-15 pull's 51,519 total, which was still missing 7/14's data.)
 -- ============================================================================
 
 WITH campaign_map AS (
@@ -67,6 +74,27 @@ WITH campaign_map AS (
         (287775, 'June Tentpole 2026'), (287768, 'June Tentpole 2026'), (287767, 'June Tentpole 2026'),
         (287771, 'June Tentpole 2026'), (287769, 'June Tentpole 2026'), (290356, 'June Tentpole 2026'), (290357, 'June Tentpole 2026')
     AS t(promotion_id, campaign)
+),
+-- Dynamically derived campaign windows (NOT hardcoded) -- see
+-- q2_tentpole_base_metrics.sql for why a hardcoded date went stale before.
+-- Safe here (no Amplitude join in this file) -- see known-corrections.md for
+-- why the dynamic-CTE approach is fine for transactions-only queries but NOT
+-- for Amplitude-joined ones (partition pruning issue).
+march_window AS (
+    SELECT MIN(DATE(ab.transaction_ts)) AS start_date, MAX(DATE(ab.transaction_ts)) AS end_date
+    FROM prod.gold_base.transactions ab
+    INNER JOIN prod.gold_base.completed_carts cc ON ab.user_id = cc.user_id AND ab.cart_id = cc.cart_id
+    WHERE cc.promotion_id IN (279246, 278665, 281016, 279263, 283280)
+      AND ab.transaction_type = 'BUY' AND NOT ab.was_buy_transaction_refunded
+      AND ab.transaction_business_line = 'B2C'
+),
+june_window AS (
+    SELECT MIN(DATE(ab.transaction_ts)) AS start_date, MAX(DATE(ab.transaction_ts)) AS end_date
+    FROM prod.gold_base.transactions ab
+    INNER JOIN prod.gold_base.completed_carts cc ON ab.user_id = cc.user_id AND ab.cart_id = cc.cart_id
+    WHERE cc.promotion_id IN (287775, 287768, 287767, 287771, 287769, 290356, 290357)
+      AND ab.transaction_type = 'BUY' AND NOT ab.was_buy_transaction_refunded
+      AND ab.transaction_business_line = 'B2C'
 ),
 tagged AS (
     SELECT
@@ -82,16 +110,18 @@ tagged AS (
                 WHEN b1.product_sub_type = 'C Plus annual'
                      AND ab.product_item_id = 'GMM31Io6RjODN9SKOuYz_A'   -- C+ Annual promo SKU, dual detection
                      AND cc.promotion_id IS NULL
-                     AND DATE(ab.transaction_ts) BETWEEN '2026-03-24' AND '2026-04-29'
+                     AND DATE(ab.transaction_ts) BETWEEN mw.start_date AND mw.end_date
                     THEN 'March Tentpole 2026'
                 WHEN b1.product_sub_type = 'C Plus annual'
                      AND ab.product_item_id = 'GMM31Io6RjODN9SKOuYz_A'
                      AND cc.promotion_id IS NULL
-                     AND DATE(ab.transaction_ts) BETWEEN '2026-06-05' AND '2026-07-13'
+                     AND DATE(ab.transaction_ts) BETWEEN jw.start_date AND jw.end_date
                     THEN 'June Tentpole 2026'
             END
         ) AS campaign
     FROM prod.gold_base.transactions ab
+    CROSS JOIN march_window mw
+    CROSS JOIN june_window jw
     INNER JOIN prod.gold_base.completed_carts cc
         ON ab.user_id = cc.user_id AND ab.cart_id = cc.cart_id
     LEFT JOIN campaign_map cm

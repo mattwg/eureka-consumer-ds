@@ -92,6 +92,17 @@ campaign's window + a 7-day lookback buffer on both ends. A combined multi-campa
 to keep as the "canonical" saved artifact, but budget for running it split if it times out (see
 known-corrections.md).
 
+**Getting the window right — two-step process, don't embed a dynamic CTE here.** Unlike the other
+patterns above, do NOT compute the campaign's date window as a CTE/subquery inside this same query
+— Databricks can't use a runtime-computed bound for partition pruning on `event_date`, so it scans
+far more than needed (confirmed: 10+ minutes with the window embedded vs. under a minute with a
+literal). Instead: (1) run a small, fast, standalone query first to resolve
+`MIN`/`MAX(transaction_ts)` for the campaign's `promotion_id`s (touches only
+`transactions`/`completed_carts`, seconds), then (2) paste those concrete dates as literals into
+this query's `event_date` bound. This keeps the window self-correcting (freshly resolved from data
+every time) without hardcoding a stale assumption, while staying fast. See
+`q2_page_level_split_2_3.sql`'s header for the exact two-step queries.
+
 ## Pattern: Conversion funnel (traffic → click → checkout → purchase)
 
 Not yet finalized as of this writing — see the funnel template discussed in the source

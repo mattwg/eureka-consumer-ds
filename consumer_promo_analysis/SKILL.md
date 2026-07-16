@@ -62,6 +62,11 @@ re-deriving the corrections that are already documented.
    corrections were applied and why, any judgment calls made, a consistency-check note (does the
    new cut's total match the base metrics total?), and known caveats (e.g. a campaign still inside
    the reconciliation window is provisional).
+8. **Quote the observed `MIN`/`MAX(transaction_ts)`** for the campaign's `promotion_id`s alongside
+   any result or finding (a one-line note is enough) — campaign end dates get hardcoded in a few
+   places (the SKU-fallback date range, the campaign registry) and can go stale if the real last
+   redemption lands later than initially assumed. Surfacing the observed range lets whoever reads
+   the finding catch a stale assumption instead of it going unnoticed (see known-corrections.md).
 
 ## Quick Start
 
@@ -84,15 +89,20 @@ WITH campaign_map AS (
 | [references/campaign-registry.md](references/campaign-registry.md) | You need a campaign's `promotion_id`(s)/date window, or are adding a new campaign |
 | [references/known-corrections.md](references/known-corrections.md) | You need the standing corrections, the real Amplitude field names, or a process lesson from past mistakes |
 | [references/query-patterns.md](references/query-patterns.md) | You need the reusable shape for a specific cut (base/region/channel/page-level/funnel) |
+| [references/pull-forward-cannibalization-framework.md](references/pull-forward-cannibalization-framework.md) | You're asked "did Promo A steal demand from Promo B" — a step-by-step method plus the confounds that break naive comparisons |
 | [queries/](queries/) | Worked, saved, run queries for the current quarter — start here before writing something new |
 
 ## Out of Scope (refuse / redirect)
 
 - **A single ad-hoc metric pull** not tied to a multi-cut campaign recap → use
   [promo-metrics-lookup](../../../bizml/promotions/promo-metrics-lookup/SKILL.md) instead.
-- **Diagnosing why a metric moved** (cannibalization, pull-forward, benchmark mismatches) → use
+- **Diagnosing why a metric moved** (benchmark mismatches, calendar effects, etc.) → use
   [promo-metric-rca](../../../bizml/promotions/promo-metric-rca/SKILL.md); this skill produces the
-  numbers RCA diagnoses, it doesn't diagnose them itself.
+  numbers RCA diagnoses, it doesn't diagnose them itself. **Exception**: pull-forward/cannibalization
+  testing (e.g. "did Promo A steal demand from Promo B") is kept here for now — see
+  [references/pull-forward-cannibalization-framework.md](references/pull-forward-cannibalization-framework.md)
+  — even though it overlaps with promo-metric-rca's stated scope, since that's a different pod's
+  skill and this methodology was developed working through this quarter's post-mortem.
 - **Actual LTV/RPU/revenue/elasticity values** — non-public financials; compute live, never store
   or hard-code.
 - **Adding or changing a campaign definition without requester confirmation** — always ask, even

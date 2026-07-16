@@ -48,6 +48,24 @@ WITH campaign_map AS (
         (287771, 'June Tentpole 2026'), (287769, 'June Tentpole 2026'), (290356, 'June Tentpole 2026'), (290357, 'June Tentpole 2026')
     AS t(promotion_id, campaign)
 ),
+-- Dynamically derived campaign windows (NOT hardcoded) -- see
+-- q2_tentpole_base_metrics.sql for why a hardcoded date went stale before.
+march_window AS (
+    SELECT MIN(DATE(ab.transaction_ts)) AS start_date, MAX(DATE(ab.transaction_ts)) AS end_date
+    FROM prod.gold_base.transactions ab
+    INNER JOIN prod.gold_base.completed_carts cc ON ab.user_id = cc.user_id AND ab.cart_id = cc.cart_id
+    WHERE cc.promotion_id IN (279246, 278665, 281016, 279263, 283280)
+      AND ab.transaction_type = 'BUY' AND NOT ab.was_buy_transaction_refunded
+      AND ab.transaction_business_line = 'B2C'
+),
+june_window AS (
+    SELECT MIN(DATE(ab.transaction_ts)) AS start_date, MAX(DATE(ab.transaction_ts)) AS end_date
+    FROM prod.gold_base.transactions ab
+    INNER JOIN prod.gold_base.completed_carts cc ON ab.user_id = cc.user_id AND ab.cart_id = cc.cart_id
+    WHERE cc.promotion_id IN (287775, 287768, 287767, 287771, 287769, 290356, 290357)
+      AND ab.transaction_type = 'BUY' AND NOT ab.was_buy_transaction_refunded
+      AND ab.transaction_business_line = 'B2C'
+),
 tagged AS (
     SELECT
         ab.transaction_id,
@@ -61,16 +79,18 @@ tagged AS (
                 WHEN b1.product_sub_type = 'C Plus annual'
                      AND ab.product_item_id = 'GMM31Io6RjODN9SKOuYz_A'   -- C+ Annual promo SKU, dual detection
                      AND cc.promotion_id IS NULL
-                     AND DATE(ab.transaction_ts) BETWEEN '2026-03-24' AND '2026-04-29'
+                     AND DATE(ab.transaction_ts) BETWEEN mw.start_date AND mw.end_date
                     THEN 'March Tentpole 2026'
                 WHEN b1.product_sub_type = 'C Plus annual'
                      AND ab.product_item_id = 'GMM31Io6RjODN9SKOuYz_A'
                      AND cc.promotion_id IS NULL
-                     AND DATE(ab.transaction_ts) BETWEEN '2026-06-05' AND '2026-07-13'
+                     AND DATE(ab.transaction_ts) BETWEEN jw.start_date AND jw.end_date
                     THEN 'June Tentpole 2026'
             END
         ) AS campaign
     FROM prod.gold_base.transactions ab
+    CROSS JOIN march_window mw
+    CROSS JOIN june_window jw
     INNER JOIN prod.gold_base.completed_carts cc
         ON ab.user_id = cc.user_id AND ab.cart_id = cc.cart_id
     LEFT JOIN campaign_map cm
@@ -105,12 +125,14 @@ GROUP BY GROUPING SETS (
 ORDER BY campaign, region;
 
 -- ============================================================================
--- Results as of 2026-07-14 (for reference -- re-run for current numbers,
--- especially June Tentpole which was still reconciling):
+-- Results as of 2026-07-16 (for reference -- re-run for current numbers):
 --
--- June Tentpole 2026:   NAMER 15,632 / $3,323,670 | EMEA 11,328 / $1,992,142
---                       India 11,329 / $894,089    | Non-India APAC 5,320 / $781,605
---                       LatAm 4,279 / $605,136      | unmapped 11 / $2,042
+-- June Tentpole 2026 (window now DYNAMICALLY derived -- observed Jun 5 to Jul 14;
+-- see q2_tentpole_base_metrics.sql for why this replaced a hardcoded, and once
+-- stale, end date). Total 52,201 / $8,373,614:
+--                       NAMER 17,098 / $3,667,873  | EMEA 12,334 / $2,193,760
+--                       India 12,157 / $961,335     | Non-India APAC 5,779 / $860,649
+--                       LatAm 4,822 / $687,959      | unmapped 11 / $2,038
 -- March Tentpole 2026:  NAMER 15,977 / $3,765,163  | EMEA 10,024 / $2,050,416
 --                       India 4,329 / $381,264      | LatAm 4,083 / $634,479
 --                       Non-India APAC 3,931 / $681,337 | unmapped 9 / $1,961

@@ -37,16 +37,38 @@
 --      — some tentpole redemptions apply the discount via SKU without populating
 --      promotion_id. These are bucketed into a campaign by date window (not by ID,
 --      since there is no promotion_id to map). Only applies to C Plus annual —
---      not a documented issue for C+ Monthly.
+--      not a documented issue for C+ Monthly. The date window itself is derived
+--      DYNAMICALLY (MIN/MAX(transaction_ts) for each campaign's promotion_ids, see
+--      march_window/june_window CTEs) rather than hardcoded -- a hardcoded '2026-07-13'
+--      end date for June Tentpole was initially assumed and went stale (real last
+--      redemption was 7/14); dynamic derivation self-corrects instead of needing a
+--      manual fix each time. See known-corrections.md for why we didn't add extra
+--      robustness (e.g. requiring meaningful volume near the boundary) on top of
+--      plain MIN/MAX -- kept intentionally simple per the requester's call.
 --   3. 2-day late-arrival reconciliation trim (transaction_ts <= CURRENT_DATE - 2).
---      CAVEAT: as of 2026-07-14, this trims June Tentpole's own last 2 days
---      (7/12-7/13, the campaign's actual final days), since the tentpole ended
---      7/13. June Tentpole numbers from this query are PROVISIONAL until
---      re-run after reconciliation catches up (re-run any time after ~7/15).
+--      Also always quote the observed MIN/MAX(transaction_ts) alongside results (see
+--      bottom of this file) so staleness is visible even though the window itself
+--      is now self-correcting.
 --
 -- FinAid exclusion: not needed. None of the 17 campaign promotion_ids are FinAid
 -- IDs (206409, 198078, 198074, 198077, 198513), and the SKU-fallback path only
 -- fires when promotion_id IS NULL, which FinAid transactions never have.
+--
+-- Results as of 2026-07-16, using DYNAMICALLY-derived campaign windows (re-run
+-- for current numbers -- window self-corrects, no manual date fix needed):
+--   June Tentpole 2026 (TRUE final, window self-resolved to Jun 5 - Jul 14):
+--     NPL 36,260 / $5,729,614 | Non-NPL 15,941 / $2,644,000 | Total 52,201 / $8,373,614
+--     (up from the 2026-07-15 pull's 51,519/$8,239,038, which -- despite being
+--     labeled "final" -- was still missing 7/14's data; see known-corrections.md
+--     for the full story: a hardcoded end-date assumption of 7/13 went stale,
+--     the true last redemption was 7/14, and the 2-day reconciliation trim
+--     masked the gap until today)
+--   March Tentpole 2026: NPL 26,357 / $5,131,255 | Non-NPL 11,995 / $2,383,210
+--                         Total 38,352 / $7,514,466 (1-record drift from the
+--                         7/15 pull -- negligible, likely a rare late correction
+--                         to old data, not a query issue)
+--   Q1 C+ Monthly: NPL 24,000 / $740,767 | Non-NPL 13,387 / $425,139 | Total 37,387 / $1,165,907
+--   Q2 C+ Monthly (286277 excluded): NPL 18,297 / $489,506 | Non-NPL 8,783 / $246,934 | Total 27,080 / $736,440
 -- ============================================================================
 
 WITH campaign_map AS (
@@ -58,6 +80,26 @@ WITH campaign_map AS (
         (287775, 'June Tentpole 2026'), (287768, 'June Tentpole 2026'), (287767, 'June Tentpole 2026'),
         (287771, 'June Tentpole 2026'), (287769, 'June Tentpole 2026'), (290356, 'June Tentpole 2026'), (290357, 'June Tentpole 2026')
     AS t(promotion_id, campaign)
+),
+-- Dynamically derived campaign windows (NOT hardcoded) -- used only by the
+-- SKU-fallback CASE below, since promotion_id-based lookups need no date bound.
+-- Self-corrects if a campaign's true last redemption lands later than expected
+-- (see known-corrections.md for why this replaced a hardcoded date that went stale).
+march_window AS (
+    SELECT MIN(DATE(ab.transaction_ts)) AS start_date, MAX(DATE(ab.transaction_ts)) AS end_date
+    FROM prod.gold_base.transactions ab
+    INNER JOIN prod.gold_base.completed_carts cc ON ab.user_id = cc.user_id AND ab.cart_id = cc.cart_id
+    WHERE cc.promotion_id IN (279246, 278665, 281016, 279263, 283280)
+      AND ab.transaction_type = 'BUY' AND NOT ab.was_buy_transaction_refunded
+      AND ab.transaction_business_line = 'B2C'
+),
+june_window AS (
+    SELECT MIN(DATE(ab.transaction_ts)) AS start_date, MAX(DATE(ab.transaction_ts)) AS end_date
+    FROM prod.gold_base.transactions ab
+    INNER JOIN prod.gold_base.completed_carts cc ON ab.user_id = cc.user_id AND ab.cart_id = cc.cart_id
+    WHERE cc.promotion_id IN (287775, 287768, 287767, 287771, 287769, 290356, 290357)
+      AND ab.transaction_type = 'BUY' AND NOT ab.was_buy_transaction_refunded
+      AND ab.transaction_business_line = 'B2C'
 ),
 tagged AS (
     SELECT
@@ -71,16 +113,18 @@ tagged AS (
                 WHEN b1.product_sub_type = 'C Plus annual'
                      AND ab.product_item_id = 'GMM31Io6RjODN9SKOuYz_A'   -- C+ Annual promo SKU, dual detection
                      AND cc.promotion_id IS NULL
-                     AND DATE(ab.transaction_ts) BETWEEN '2026-03-24' AND '2026-04-29'
+                     AND DATE(ab.transaction_ts) BETWEEN mw.start_date AND mw.end_date
                     THEN 'March Tentpole 2026'
                 WHEN b1.product_sub_type = 'C Plus annual'
                      AND ab.product_item_id = 'GMM31Io6RjODN9SKOuYz_A'
                      AND cc.promotion_id IS NULL
-                     AND DATE(ab.transaction_ts) BETWEEN '2026-06-05' AND '2026-07-13'
+                     AND DATE(ab.transaction_ts) BETWEEN jw.start_date AND jw.end_date
                     THEN 'June Tentpole 2026'
             END
         ) AS campaign
     FROM prod.gold_base.transactions ab
+    CROSS JOIN march_window mw
+    CROSS JOIN june_window jw
     INNER JOIN prod.gold_base.completed_carts cc
         ON ab.user_id = cc.user_id AND ab.cart_id = cc.cart_id          -- BOTH keys, not just cart_id
     LEFT JOIN campaign_map cm
@@ -109,3 +153,9 @@ GROUP BY GROUPING SETS (
     ()
 )
 ORDER BY campaign, payer_type;
+
+-- Always quote the observed min/max transaction date per campaign alongside
+-- results (see known-corrections.md) -- run this alongside the query above:
+-- SELECT 'March Tentpole 2026' AS campaign, * FROM march_window
+-- UNION ALL
+-- SELECT 'June Tentpole 2026' AS campaign, * FROM june_window

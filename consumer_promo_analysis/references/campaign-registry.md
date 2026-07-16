@@ -32,7 +32,11 @@ in this skill should need to change when a new campaign shows up.
 
 ## June Tentpole 2026
 - `promotion_id`: 287775, 287768, 287767, 287771, 287769, 290356, 290357 (APAC, Global, India, LATAM, NAMER, + 2 "last chance" close-outs)
-- Window: 2026-06-05 to 2026-07-13 (India starts 6/5, rest 6/8)
+- Window: 2026-06-05 to 2026-07-14 (India starts 6/5, rest 6/8) -- this is a point-in-time
+  snapshot only, NOT authoritative. An initial assumption of 7/13 went stale (the true last
+  redemption was 7/14) before this was corrected. All 4 saved queries now derive each campaign's
+  window dynamically (`MIN`/`MAX(transaction_ts)`, see `known-corrections.md`), so they
+  self-correct without needing this field updated -- treat this line as informational only.
 - Product: C Plus annual
 
 ## Confirmed excluded / not campaigns (do not add without a reason to revisit)
