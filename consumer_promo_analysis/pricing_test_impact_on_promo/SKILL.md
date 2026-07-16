@@ -219,6 +219,18 @@ Country-level split of registrations in Test and Control — part of the "countr
 
 **Sort order differs from Query 5:** `ORDER BY 1, 2, 3 DESC` (country ascending, is_control ascending, user_count descending) vs Query 5's `ORDER BY 1 DESC, 2` (channel descending, is_control ascending, no sort on count). Worth confirming which order you actually want when reading results — this one surfaces the largest user-count row first within each `(country, is_control)` grouping, which only matters if a country has more than 2 rows (it shouldn't, since `is_control` only has 2 values, so the 3rd sort key is mostly inert here).
 
+### Query 9 — Country-level transactions split, Test vs Control
+
+📄 [`queries/09_country_transactions_split.sql`](queries/09_country_transactions_split.sql)
+
+The transactions-side counterpart to Query 8's registration split — the other half of the "country level breakdown at the traffic split and transactions split" nuance from Section 2. Builds on the same `domain`, `high_pricing_test_users`, `base`, `cplus_annual` CTEs as Queries 6/7 (channel column, `user_stats_vw` join included, same dead/ambiguous-join flag applies here too), but with two structural differences worth calling out.
+
+**Date window differs from Queries 6/7:** here `base` is bounded `2026-06-08` to `2026-07-13` — the full promo window — rather than capped at the pricing test's own end date (6/24). No urgency-messaging exclusion either. This is a wider, uncapped window relative to the isolation nuances baked into Query 6.
+
+**Period logic is coarser than Query 4/6:** the `period` `CASE` only distinguishes `'Pre-promo'` (before 6/8) vs `'Promo'` (everything else) — the `'During early bird'` branch is commented out rather than removed, collapsing Early Bird and Post-Early-Bird into a single `'Promo'` bucket. This looks like a deliberate simplification for the country cut (probably to keep the top-5-country view to two buckets instead of three), but confirm that's the intent rather than an accidental carry-over from copying Query 6's structure.
+
+**Flag for confirmation — output only has `promo_users`, no cash or non-promo columns:** despite being introduced as the "transactions split," the final `SELECT` only computes `COUNT(DISTINCT CASE WHEN Q2_2026_Tentpole_promo_flag = 1 THEN user_id END) AS promo_users` — grain is `(arm, period, country_cd)`. There's no `cash` column and no non-promo user count, unlike Query 4/6's fuller promo/non-promo/total pattern. Worth confirming whether this is intentionally scoped to just a user-count view (e.g. to compare against Query 8's registration counts) or whether a cash column was meant to be added.
+
 ## 4. Output contract
 
 A table with data like this:
