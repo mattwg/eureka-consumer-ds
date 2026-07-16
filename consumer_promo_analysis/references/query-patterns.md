@@ -56,7 +56,7 @@ Totality + by-campaign cash and redemptions, split by payer type. Worked example
 [../queries/q2_tentpole_base_metrics.sql](../queries/q2_tentpole_base_metrics.sql).
 
 Shape: `campaign_map` CTE → `tagged` CTE (join transactions/completed_carts/subscription_payments/
-products_detail/user_stats_vw, apply the 3 standing corrections, `COALESCE` the ID-based campaign
+products_detail/user_stats_vw, apply the standing corrections, `COALESCE` the ID-based campaign
 lookup with the SKU-fallback date-window CASE for C+ Annual) → final `SELECT` with
 `GROUPING SETS ((campaign, payer_type), ())` for totality + breakdown in one query.
 

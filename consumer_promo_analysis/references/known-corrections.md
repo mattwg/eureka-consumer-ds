@@ -5,9 +5,9 @@ this before writing a new query from scratch — every one of these was found by
 naive first pass against a production reference query or against the requester, and each one
 materially changed the numbers.
 
-## The three standing query corrections
+## The standing query corrections
 
-Apply all three to any query counting promo redemptions or cash, regardless of which cut:
+Apply all of these to any query counting promo redemptions or cash, regardless of which cut:
 
 1. **`payment_order = 1 OR payment_order IS NULL`** — a "redemption" is a subscription's FIRST
    payment, not every recurring charge. Without this filter, recurring products (C+ Monthly)
@@ -29,6 +29,36 @@ Apply all three to any query counting promo redemptions or cash, regardless of w
    quote the last 48h as final. **Caveat**: if a campaign's window runs right up to "yesterday,"
    this trim cuts into the campaign's own final days, not just extra data beyond it — numbers for
    a just-ended campaign are provisional until re-run a couple of days later.
+4. **Pad any campaign end-date upper bound by +1 day when using it as a filter.** Promos are
+   scheduled/run in whatever local time zone the marketing team uses (e.g. Pacific); `transaction_ts`
+   is stored in UTC. Late-in-the-day local-time activity lands on the *next* UTC calendar date, so a
+   strict `DATE(transaction_ts) <= end_date` filter (using a UTC-derived or externally-provided
+   end_date) can silently cut off the last few real hours of a campaign. This applies whenever an
+   end-date is used as an upper-bound FILTER — e.g. the SKU-fallback date range (correction #2) and
+   any Amplitude lookback window — not when simply *observing/reporting* a MIN/MAX date (that
+   should stay the raw observed value). Kept as a simple universal +1 day pad rather than modeling
+   the actual time zone, since promos may run in different zones and exact modeling isn't worth the
+   complexity for the size of the effect (a few hours per boundary).
+5. **Ask the requester for the campaign's authoritative start/end date FIRST — don't default to
+   deriving it from data.** Data-derived dates (`MIN`/`MAX(transaction_ts)`) can be unreliable for
+   two reasons: (a) the timezone spillover in correction #4, and (b) a campaign "type" is often made
+   up of several different `promotion_id`s/names that each show a different, noisy individual
+   first/last-redemption date (see #6 below) — none of which may match the campaign's true official
+   window. **Priority order: ask the requester for the official start/end date first; only fall
+   back to deriving it from data if they don't have it.** This reverses the earlier approach in
+   this skill (fully dynamic derivation, no questions asked) — that approach fixed one real bug
+   (a stale hardcoded date) but isn't a substitute for the requester's own authoritative source
+   when they have one.
+6. **One common start/end date applies to an entire campaign TYPE, not to each individual
+   `promotion_id`/name within it.** E.g. "Q1 C+ Monthly" is made up of 5 different promotion_ids
+   (Seize the Weekend, 2 Seize the Savings variants, SEO discount page, XDP banner) that each show
+   a different first/last-redemption date in the data — that's noise, not a real distinction.
+   Get ONE shared, requester-confirmed date range for the whole type, and apply it as a date filter
+   **on top of** (in addition to) the `promotion_id` membership filter. This has a useful side
+   effect: it naturally trims any promo that runs longer than the campaign's official window (e.g.
+   an evergreen-looking placement also reused across other campaigns) down to just the slice that
+   falls inside the confirmed window — resolving "is this promo in or out" without a separate
+   judgment call for it.
 
 FinAid exclusion (the 5 FinAid `promotion_id`s) is usually *not* needed on top of these three if
 you're joining to an explicit campaign_map of known-good promotion_ids (none of which are FinAid)

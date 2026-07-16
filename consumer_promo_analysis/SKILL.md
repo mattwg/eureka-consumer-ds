@@ -39,11 +39,18 @@ re-deriving the corrections that are already documented.
    campaign's promotion_ids") and **confirm the definition with the requester before adding it** —
    see the "always confirm scope nuances" lesson in
    [references/known-corrections.md](references/known-corrections.md). Don't infer scope from
-   naming/ID clustering alone, even when it looks obvious.
+   naming/ID clustering alone, even when it looks obvious. **Two questions to ask the requester at
+   this stage, every time (see known-corrections.md #5-6):**
+   - "Do you have the official start/end date for this campaign?" — ask first, don't default to
+     deriving it from data (data-derived dates can be unreliable: timezone spillover, and
+     individual `promotion_id`s within one campaign type often show different, noisy dates).
+   - If the campaign is made up of multiple `promotion_id`s/names (a "type" like "Q1 C+ Monthly"),
+     confirm ONE shared date range applies to all of them, and apply it as a filter on top of the
+     `promotion_id` membership filter — not each ID's own individually-observed window.
 2. **Scope first, then work one cut/hypothesis at a time.** Agree on objectives + which cuts are
    needed before running anything; don't front-load every cut/query at once.
-3. **Apply the three standing corrections** (payment_order=1, C+ Annual SKU dual detection,
-   2-day late-arrival trim) to every query — see
+3. **Apply the standing corrections** (payment_order=1, C+ Annual SKU dual detection, 2-day
+   late-arrival trim, +1 day end-date padding) to every query — see
    [references/known-corrections.md](references/known-corrections.md) for what each one fixes and
    why. These are not optional per-cut — they apply regardless of which cut you're building.
 4. **Pick the cut(s) needed** and start from the matching worked pattern in
@@ -78,7 +85,7 @@ WITH campaign_map AS (
         (285085, 'Q2 C+ Monthly')  -- promotion_ids from campaign-registry.md
     AS t(promotion_id, campaign)
 )
--- ... join chain + 3 standing corrections + GROUPING SETS for totality + breakdown
+-- ... join chain + standing corrections + GROUPING SETS for totality + breakdown
 -- see queries/q2_tentpole_base_metrics.sql for the full pattern
 ```
 
