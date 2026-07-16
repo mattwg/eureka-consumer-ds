@@ -140,7 +140,7 @@ Builds directly on Query 2's skeleton (`domain`, `high_pricing_test_users`, `bas
 - `cplus_annual`: filters `base` down to `product_sub_type = 'C Plus annual'` AND `hpt_flag IN ('true', 'false')` — i.e. drops the `'non-high_pricing_test_population'` bucket, keeping only users tagged Test or Control.
 - Final `SELECT`: aggregates to `(transaction_dt, arm, promo_status)` grain — `arm` from `hpt_flag` (`'true'` → Control, else → Test), `promo_status` from whether `promotion_id` is set **and** it's one of the Q2 '26 Tentpole promo IDs.
 
-**Note on chart form:** this dual-axis (Cash-lines + Users-bars sharing one plot) version is the original pattern used during the live analysis. A later iteration of this work split Cash and Users into two separate single-axis line charts, Test vs Control, restricted to promo-only cash/users — since a dual y-axis chart makes trend comparisons harder to read correctly. Consider that split version as the preferred default going forward; keep this dual-axis version for the specific "full pricing-test-to-promo-end" directional view described above.
+**Note on chart form:** this dual-axis (Cash-lines + Users-bars sharing one plot) version is the original pattern used during the live analysis. **Query 10** is the later iteration that splits Cash and Users into two separate single-axis line charts, Test vs Control, restricted to promo-only cash/users — since a dual y-axis chart makes trend comparisons harder to read correctly. Consider Query 10 the preferred default going forward; keep this dual-axis version for the specific "full pricing-test-to-promo-end" directional view described above.
 
 ### Query 4 — Overall impact table: Cash, Users, Cash/User by Promo/Non-promo/Total × 3 periods × arm
 
@@ -230,6 +230,16 @@ The transactions-side counterpart to Query 8's registration split — the other 
 **Period logic is coarser than Query 4/6:** the `period` `CASE` only distinguishes `'Pre-promo'` (before 6/8) vs `'Promo'` (everything else) — the `'During early bird'` branch is commented out rather than removed, collapsing Early Bird and Post-Early-Bird into a single `'Promo'` bucket. This looks like a deliberate simplification for the country cut (probably to keep the top-5-country view to two buckets instead of three), but confirm that's the intent rather than an accidental carry-over from copying Query 6's structure.
 
 **Flag for confirmation — output only has `promo_users`, no cash or non-promo columns:** despite being introduced as the "transactions split," the final `SELECT` only computes `COUNT(DISTINCT CASE WHEN Q2_2026_Tentpole_promo_flag = 1 THEN user_id END) AS promo_users` — grain is `(arm, period, country_cd)`. There's no `cash` column and no non-promo user count, unlike Query 4/6's fuller promo/non-promo/total pattern. Worth confirming whether this is intentionally scoped to just a user-count view (e.g. to compare against Query 8's registration counts) or whether a cash column was meant to be added.
+
+### Query 10 — Promo-only Cash and Users, two single-axis charts (Test vs Control)
+
+📄 [`queries/10_promo_only_split_charts.sql`](queries/10_promo_only_split_charts.sql) + [`queries/10_promo_only_split_charts.py`](queries/10_promo_only_split_charts.py)
+
+This is the split-chart iteration flagged in Query 3's note — Cash and Users each get their own single-axis line chart (rather than sharing one dual-axis plot), 2 lines per chart (Control, Test), filtered to **promo cash/users only**, Early Bird shaded. **This is the preferred chart pattern going forward.**
+
+SQL is the same `domain`/`high_pricing_test_users`/`base`/`cplus_annual` pattern as Query 3, with the upper date bound hardcoded to the promo end (`2026-07-13`) alongside the pre-existing `CURRENT_DATE - 2`, rather than relying on `CURRENT_DATE - 2` alone.
+
+**Why pre-promo doesn't show up on the chart:** `df_promo = df[df["promo_status"] == "Promo"]` drops every row where no promotion was live — which, by construction, is every day before the promo starts (`promotion_id` is only ever set once a promo is running). So `dates = pd.date_range(df_promo["transaction_dt"].min(), ...)` naturally begins at the promo start (6/8), not the pricing-test start (4/28). This isn't a bug — it's the direct consequence of filtering to promo-only data — but if a pre-promo baseline needs to be visible on this specific chart, the fix is to hardcode the `dates` range to start at `2026-04-28` instead of deriving it from `df_promo`, which leaves the pre-promo segment blank (no promo data exists there) rather than never appearing on the x-axis at all.
 
 ## 4. Output contract
 
