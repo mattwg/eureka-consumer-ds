@@ -14,15 +14,15 @@ WITH variants AS (
         -- Variant metadata.
         , epic_variant_id
         , epic_variant_weight
-        , TRIM(REGEXP_REPLACE(epic_variant_name, '', '')) AS cleaned_epic_variant_name
+        , TRIM(epic_variant_name) AS cleaned_epic_variant_name
         ,
         (MAX(CASE WHEN epic_variant_index = 0 AND epic_experiment_id = 'kEs8FDkHEfGErBK2XQAA3w' THEN 1 ELSE 0 END)
-        OVER (PARTITION BY TRIM(REGEXP_REPLACE(epic_variant_name, '', ''))))::BOOLEAN
+        OVER (PARTITION BY TRIM(epic_variant_name)))::BOOLEAN
          AS is_control
         -- Get the order of variants. Order same as EPIC unless control is manually set, in which case control is put first.
         , CASE
         WHEN is_control THEN 1
-        ELSE -MIN(epic_variant_index) OVER (PARTITION BY TRIM(REGEXP_REPLACE(epic_variant_name, '', '')))
+        ELSE -MIN(epic_variant_index) OVER (PARTITION BY TRIM(epic_variant_name))
         END AS sort_by
       FROM prod.bi.epic_variants
       JOIN prod.bi.epic_experiments USING (epic_experiment_id)

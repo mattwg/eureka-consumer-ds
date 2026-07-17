@@ -14,7 +14,7 @@ with domain as (
     left join prod.gold.phoenix_specializations_vw ps
         on ps.phoenix_specialization_id = upp.underlying_product_item_id
 ),
-high_pricing_test_users AS (      ----is this the right query
+high_pricing_test_users AS (
       WITH variants AS (
       SELECT
         -- Experiment metadata.
@@ -26,15 +26,15 @@ high_pricing_test_users AS (      ----is this the right query
         -- Variant metadata.
         , epic_variant_id
         , epic_variant_weight
-        , TRIM(REGEXP_REPLACE(epic_variant_name, '', '')) AS cleaned_epic_variant_name
+        , TRIM(epic_variant_name) AS cleaned_epic_variant_name
         ,
         (MAX(CASE WHEN epic_variant_index = 0 AND epic_experiment_id = 'kEs8FDkHEfGErBK2XQAA3w' THEN 1 ELSE 0 END)
-        OVER (PARTITION BY TRIM(REGEXP_REPLACE(epic_variant_name, '', ''))))::BOOLEAN
+        OVER (PARTITION BY TRIM(epic_variant_name)))::BOOLEAN
          AS is_control
         -- Get the order of variants. Order same as EPIC unless control is manually set, in which case control is put first.
         , CASE
         WHEN is_control THEN 1
-        ELSE -MIN(epic_variant_index) OVER (PARTITION BY TRIM(REGEXP_REPLACE(epic_variant_name, '', '')))
+        ELSE -MIN(epic_variant_index) OVER (PARTITION BY TRIM(epic_variant_name))
         END AS sort_by
       FROM prod.bi.epic_variants
       JOIN prod.bi.epic_experiments USING (epic_experiment_id)
@@ -98,9 +98,6 @@ LEFT JOIN prod.silver_base.static_countries b
 LEFT JOIN prod.bi.subscription_payments a
     ON a.user_id = ab.user_id
     AND a.transaction_id = ab.transaction_id
-LEFT JOIN prod.bi.subscriptions bs
-    ON a.user_id = bs.user_id
-    AND a.subscription_id = bs.subscription_id
 LEFT JOIN prod.bi.subscriptions__payment_stats d
     ON a.user_id = d.user_id
     AND a.subscription_id = d.subscription_id

@@ -1,5 +1,5 @@
 ---
-name: high-income-pricing-test-promo-impact
+name: pricing-test-impact-on-promo
 description: >
   Analyzing the impact of an A/B pricing test that overlaps with a live
   promo — worked through the High Income Pricing Test vs Q2 '26 C+ Annual
@@ -10,6 +10,8 @@ description: >
   phase comparisons, and calculating final USD impact. Trigger whenever assessing
   how a pricing test and a promo interact or confound each other — this specific
   case is the concrete template; ask the user upfront about new tests' own nuances.
+owners: srivaakshita
+reviewer: ssatyavolu-coursera
 ---
 
 # High Income Pricing Test — Impact on Q2 '26 C+ Annual Tentpole Promo
@@ -125,7 +127,6 @@ Sample skeleton query for marrying the test users (Query 1) with transaction dat
 - `transactions_vw ab` (base fact table) → `completed_carts_vw cc1` on `user_id + cart_id`: pulls `promotion_name`/`promotion_id` so a transaction can be flagged as belonging to the Q2 '26 Tentpole promo (hardcoded `promotion_id` list — swap per promo).
 - → `users_vw f` on `user_id` → `static_countries b` on `country_cd`: attaches `country_group_finance` (finance region rollup).
 - → `subscription_payments a` on `user_id + transaction_id`: subscription-level payment attributes — `payment_order`, `recurring_payment_start/end_ts`, `subscription_id`, `subscription_status`, `is_subscription_active`.
-- → `subscriptions bs` on `user_id + subscription_id`: joined but no column from it is currently selected in this skeleton. Kept as-is.
 - → `subscriptions__payment_stats d` on `user_id + subscription_id`: `is_cplus_upsell` flag.
 - → `domain pt` on `underlying_product_item_id`: course/specialization primary domain, coalesced to `'Others'` when null.
 - → `products_detail b1` on `product_item_id + product_type`: `product_sub_type` (e.g. `'C Plus annual'`), falling back to `ab.underlying_product_type` when missing.
@@ -196,7 +197,7 @@ Same output table as Query 4 (`arm × period`, Cash/Users/Cash-per-user split pr
 
 **Subtlety worth flagging on the period boundaries:** the `period` CASE statement's boundaries are unchanged (`'During early bird'` is still defined as `transaction_dt BETWEEN '2026-06-08' AND '2026-06-17'`). The urgency-window exclusion happens one level up, in the `base` CTE's `WHERE` clause — so rows for 6/15–6/17 are dropped entirely before they ever reach the `period` labeling. Net effect: `'During early bird'` still carries that label, but only ever contains 6/8–6/14 data once the exclusion filter is applied. Worth being explicit about this when reusing the pattern, since the period boundary alone doesn't tell you the window was shortened — you have to read the `WHERE` clause to know that.
 
-**Note on the `user_stats_vw us` join:** `channel` (`first_payment_referrer_cons_l0_mktg_chnl_ft28d`) is selected unqualified rather than as `us.first_payment_referrer_cons_l0_mktg_chnl_ft28d`. The query runs without an ambiguous-column error, so it resolves cleanly from one source table — no issue in practice.
+**Note on the `user_stats_vw us` join:** `channel` is selected as `us.first_payment_referrer_cons_l0_mktg_chnl_ft28d`, qualified to the `user_stats_vw` alias so a future column collision from another joined table can't silently repoint it.
 
 ### Query 7 — Trendline graph with Query 6's nuances baked in
 
@@ -220,7 +221,7 @@ Country-level split of registrations in Test and Control — part of the "countr
 
 **Logic:** groups by `(country, is_control)`, counts distinct `user_id`. Same 50:50 sense-check purpose as Query 5, at country granularity instead of channel.
 
-**Naming leftover worth flagging:** the join CTE is still named `channel_impression_user_level_data`, copied over from Query 5, even though it now carries country data rather than channel data. Harmless, but worth renaming if this pattern gets reused again (e.g. to `country_impression_user_level_data`) to avoid confusion.
+**Naming:** the join CTE is named `country_impression_user_level_data`, renamed from the Query 5 copy-paste (`channel_impression_user_level_data`) to match the country data it actually carries.
 
 **Sort order differs from Query 5:** `ORDER BY 1, 2, 3 DESC` (country ascending, is_control ascending, user_count descending) vs Query 5's `ORDER BY 1 DESC, 2` (channel descending, is_control ascending, no sort on count). Worth confirming which order you actually want when reading results — this one surfaces the largest user-count row first within each `(country, is_control)` grouping, which only matters if a country has more than 2 rows (it shouldn't, since `is_control` only has 2 values, so the 3rd sort key is mostly inert here).
 
@@ -228,7 +229,7 @@ Country-level split of registrations in Test and Control — part of the "countr
 
 📄 [`queries/09_country_transactions_split.sql`](queries/09_country_transactions_split.sql)
 
-The transactions-side counterpart to Query 8's registration split — the other half of the "country level breakdown at the traffic split and transactions split" nuance from Section 2. Builds on the same `domain`, `high_pricing_test_users`, `base`, `cplus_annual` CTEs as Queries 6/7 (channel column, `user_stats_vw` join included, same dead/ambiguous-join flag applies here too), but with two structural differences worth calling out.
+The transactions-side counterpart to Query 8's registration split — the other half of the "country level breakdown at the traffic split and transactions split" nuance from Section 2. Builds on the same `domain`, `high_pricing_test_users`, `base`, `cplus_annual` CTEs as Queries 6/7 (channel column, `user_stats_vw` join included, same `us.`-qualified pattern), but with two structural differences worth calling out.
 
 **Date window differs from Queries 6/7:** here `base` is bounded `2026-06-08` to `2026-07-13` — the full promo window — rather than capped at the pricing test's own end date (6/24). No urgency-messaging exclusion either. This is a wider, uncapped window relative to the isolation nuances baked into Query 6.
 

@@ -27,14 +27,14 @@ high_pricing_test_users AS (
         , epic_experiment_display_name
         , epic_variant_id
         , epic_variant_weight
-        , TRIM(REGEXP_REPLACE(epic_variant_name, '', '')) AS cleaned_epic_variant_name
+        , TRIM(epic_variant_name) AS cleaned_epic_variant_name
         ,
         (MAX(CASE WHEN epic_variant_index = 0 AND epic_experiment_id = 'kEs8FDkHEfGErBK2XQAA3w' THEN 1 ELSE 0 END)
-        OVER (PARTITION BY TRIM(REGEXP_REPLACE(epic_variant_name, '', ''))))::BOOLEAN
+        OVER (PARTITION BY TRIM(epic_variant_name)))::BOOLEAN
          AS is_control
         , CASE
         WHEN is_control THEN 1
-        ELSE -MIN(epic_variant_index) OVER (PARTITION BY TRIM(REGEXP_REPLACE(epic_variant_name, '', '')))
+        ELSE -MIN(epic_variant_index) OVER (PARTITION BY TRIM(epic_variant_name))
         END AS sort_by
       FROM prod.bi.epic_variants
       JOIN prod.bi.epic_experiments USING (epic_experiment_id)
@@ -85,7 +85,6 @@ base AS (
     LEFT JOIN prod.gold.users_vw f ON ab.user_id = f.user_id
     LEFT JOIN prod.silver_base.static_countries b ON f.country_cd = b.country_cd
     LEFT JOIN prod.bi.subscription_payments a ON a.user_id = ab.user_id AND a.transaction_id = ab.transaction_id
-    LEFT JOIN prod.bi.subscriptions bs ON a.user_id = bs.user_id AND a.subscription_id = bs.subscription_id
     LEFT JOIN prod.bi.subscriptions__payment_stats d ON a.user_id = d.user_id AND a.subscription_id = d.subscription_id
     LEFT JOIN domain pt ON a.underlying_product_item_id = pt.underlying_product_item_id
     LEFT JOIN prod.bi.products_detail b1 ON ab.product_item_id = b1.product_item_id AND ab.product_type = b1.product_type
