@@ -60,7 +60,7 @@ Apply all of these to any query counting promo redemptions or cash, regardless o
    falls inside the confirmed window — resolving "is this promo in or out" without a separate
    judgment call for it.
 
-FinAid exclusion (the 5 FinAid `promotion_id`s) is usually *not* needed on top of these three if
+FinAid exclusion (the 5 FinAid `promotion_id`s) is usually *not* needed on top of these corrections if
 you're joining to an explicit campaign_map of known-good promotion_ids (none of which are FinAid)
 — it's only needed for broader, unscoped promo queries.
 

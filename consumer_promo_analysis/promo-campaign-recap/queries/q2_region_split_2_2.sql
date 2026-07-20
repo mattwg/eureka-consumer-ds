@@ -4,7 +4,8 @@
 -- Purpose: Cash + redemptions by region, in totality and by campaign, for the
 -- four Q2 post-mortem campaigns. Built on the same campaign_map + SKU-fallback
 -- + payment_order + 2-day-trim fixes as q2_tentpole_base_metrics.sql -- see
--- that file for full rationale on the three corrections.
+-- that file for full rationale on those corrections (see known-corrections.md
+-- for the current full list).
 --
 -- Region field: static_countries_vw.country_group_finance, joined via
 -- users_vw.country_cd. NOTE: static_countries_vw's YAML doc (table-discovery/
@@ -71,7 +72,6 @@ tagged AS (
         ab.transaction_id,
         ab.transaction_ts,
         ab.cash_receipt_usd_estimate,
-        us.first_unrefund_payment_ts,
         scv.country_group_finance AS region,
         COALESCE(
             cm.campaign,
@@ -99,8 +99,6 @@ tagged AS (
         ON ab.user_id = sp.user_id AND ab.transaction_id = sp.transaction_id
     LEFT JOIN prod.bi.products_detail b1
         ON ab.product_item_id = b1.product_item_id AND ab.product_type = b1.product_type
-    LEFT JOIN prod.gold.user_stats_vw us
-        ON ab.user_id = us.user_id
     LEFT JOIN prod.gold.users_vw us1
         ON ab.user_id = us1.user_id
     LEFT JOIN prod.silver.static_countries_vw scv

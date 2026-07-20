@@ -1,4 +1,7 @@
-CLAUDE.md  
+# CLAUDE.md
+
+Scope: applies to work within this `promo-campaign-recap/` skill only — not to sibling skills elsewhere in `consumer_promo_analysis/`.
+
 Behavioral guidelines to enhance productivity and reduce common pitfalls in data analysis, with attention to SQL and numerical validation. Merge with specific project instructions as needed.
 
 **Tradeoff:** These guidelines prioritize accuracy and clarity over speed. For routine tasks, apply your judgment.

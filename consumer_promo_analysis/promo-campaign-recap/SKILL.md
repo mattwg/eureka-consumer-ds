@@ -20,8 +20,12 @@ generalizes from.
 
 **Design goal: easy to extend.** New campaigns get added to one small file
 ([references/campaign-registry.md](references/campaign-registry.md)) without touching the
-methodology. New teammates picking this up should be able to add a campaign or a new cut without
-re-deriving the corrections that are already documented.
+methodology or corrections. New teammates picking this up should be able to add a campaign or a new
+cut without re-deriving the corrections that are already documented. Note: each saved query in
+[queries/](queries/) embeds its own `campaign_map` CTE by design (so a saved query stays a
+self-contained, runnable artifact) — adding a campaign to the registry doesn't automatically update
+already-saved queries; a new/changed campaign still needs its `campaign_map` added to whichever
+saved queries should include it.
 
 ## When to Use This Skill
 
@@ -49,10 +53,10 @@ re-deriving the corrections that are already documented.
      `promotion_id` membership filter — not each ID's own individually-observed window.
 2. **Scope first, then work one cut/hypothesis at a time.** Agree on objectives + which cuts are
    needed before running anything; don't front-load every cut/query at once.
-3. **Apply the standing corrections** (payment_order=1, C+ Annual SKU dual detection, 2-day
-   late-arrival trim, +1 day end-date padding) to every query — see
-   [references/known-corrections.md](references/known-corrections.md) for what each one fixes and
-   why. These are not optional per-cut — they apply regardless of which cut you're building.
+3. **Apply the standing corrections** — see
+   [references/known-corrections.md](references/known-corrections.md) for the current full list of
+   what each one fixes and why. These are not optional per-cut — they apply regardless of which cut
+   you're building.
 4. **Pick the cut(s) needed** and start from the matching worked pattern in
    [references/query-patterns.md](references/query-patterns.md) (base metrics, region, channel,
    page-level, or the not-yet-finalized funnel/C+-landing-page patterns) — reuse a saved query in
@@ -102,27 +106,31 @@ WITH campaign_map AS (
 ## Out of Scope (refuse / redirect)
 
 - **A single ad-hoc metric pull** not tied to a multi-cut campaign recap → use
-  [promo-metrics-lookup](../../../bizml/promotions/promo-metrics-lookup/SKILL.md) instead.
+  [promo-metrics-lookup](../../../../bizml/promotions/promo-metrics-lookup/SKILL.md) instead.
 - **Diagnosing why a metric moved** (benchmark mismatches, calendar effects, etc.) → use
-  [promo-metric-rca](../../../bizml/promotions/promo-metric-rca/SKILL.md); this skill produces the
+  [promo-metric-rca](../../../../bizml/promotions/promo-metric-rca/SKILL.md); this skill produces the
   numbers RCA diagnoses, it doesn't diagnose them itself. **Exception**: pull-forward/cannibalization
   testing (e.g. "did Promo A steal demand from Promo B") is kept here for now — see
   [references/pull-forward-cannibalization-framework.md](references/pull-forward-cannibalization-framework.md)
   — even though it overlaps with promo-metric-rca's stated scope, since that's a different pod's
   skill and this methodology was developed working through this quarter's post-mortem.
-- **Actual LTV/RPU/revenue/elasticity values** — non-public financials; compute live, never store
-  or hard-code.
+- **Actual LTV/RPU/revenue/elasticity values as a stored/authoritative source** — non-public
+  financials; always recompute live for reporting or decision-making, never treat a past result as
+  current truth. **Narrow exception**: a saved query's header comment may include a dated "Results
+  as of [date]" snapshot (e.g. `Total 52,201 / $8,373,614`) purely as a point-in-time consistency
+  check — so a future run can compare against it and catch drift/staleness (see known-corrections.md's
+  staleness lesson) — not as a number to quote or reuse in place of a fresh query.
 - **Adding or changing a campaign definition without requester confirmation** — always ask, even
   when the naming/timing looks obvious. See known-corrections.md.
 - **Any table this skill doesn't document** — say so and stop rather than guessing a table/column.
 
 ## Related Skills
 
-- [promo-metrics-lookup](../../../bizml/promotions/promo-metrics-lookup/SKILL.md) — canonical single-
-  metric definitions and the base join chain this skill's patterns are built on.
-- [promo-metric-rca](../../../bizml/promotions/promo-metric-rca/SKILL.md) — diagnoses *why* a metric
-  moved once this skill has produced the numbers.
-- [table-discovery/promotions-tables](../../../../table-discovery/promotions-tables/SKILL.md) — table
-  schemas; check the LIVE schema (`DESCRIBE TABLE`) before trusting a YAML flagged "partial."
-- `Claude.md` (this folder) — general analysis behavior guidelines (state assumptions, avoid
-  overcomplication, precision) that apply to all work in this folder, not just this skill.
+- [promo-metrics-lookup](../../../../bizml/promotions/promo-metrics-lookup/SKILL.md) — canonical
+  single-metric definitions and the base join chain this skill's patterns are built on.
+- [promo-metric-rca](../../../../bizml/promotions/promo-metric-rca/SKILL.md) — diagnoses *why* a
+  metric moved once this skill has produced the numbers.
+- [table-discovery/promotions-tables](../../../../../table-discovery/promotions-tables/SKILL.md) —
+  table schemas; check the LIVE schema (`DESCRIBE TABLE`) before trusting a YAML flagged "partial."
+- [`CLAUDE.md`](CLAUDE.md) — general analysis behavior guidelines (state assumptions, avoid
+  overcomplication, precision) scoped to this skill only.

@@ -87,6 +87,11 @@ Shape: `redeemers` CTE (same tagging logic as the base pattern, but only `transa
 the C+ page → `first_touch` CTE dedup via `ROW_NUMBER() OVER (PARTITION BY transaction_id ORDER BY
 client_event_time ASC) = 1` → final aggregation.
 
+**First-touch, not last-touch — confirmed intentional.** This attributes to whichever page
+introduced the user to the purchase consideration within the 7-day window, not the last page before
+redemption. Kept as-is on review; revisit only if a future ask specifically wants "what page
+immediately preceded the redemption" instead.
+
 **Performance**: write/run this as one query PER CAMPAIGN, each with `event_date` bounded to that
 campaign's window + a 7-day lookback buffer on both ends. A combined multi-campaign version is fine
 to keep as the "canonical" saved artifact, but budget for running it split if it times out (see

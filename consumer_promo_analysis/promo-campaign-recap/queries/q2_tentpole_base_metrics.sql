@@ -150,7 +150,7 @@ FROM tagged
 WHERE campaign IS NOT NULL
 GROUP BY GROUPING SETS (
     (campaign, payer_type),
-    ()
+    (campaign)
 )
 ORDER BY campaign, payer_type;
 

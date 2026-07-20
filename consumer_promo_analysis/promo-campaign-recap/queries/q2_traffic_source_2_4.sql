@@ -4,9 +4,9 @@
 -- Purpose: Cash + redemptions, split NPL vs Non-NPL and by channel, in
 -- totality and by campaign, for the four Q2 post-mortem campaigns.
 -- Built on the same campaign_map + SKU-fallback + payment_order fixes as
--- q2_tentpole_base_metrics.sql -- see that file for full rationale on the
--- three corrections (payment_order=1, C+ Annual SKU dual detection, 2-day
--- late-arrival trim).
+-- q2_tentpole_base_metrics.sql -- see that file for full rationale on those
+-- corrections (payment_order=1, C+ Annual SKU dual detection, 2-day
+-- late-arrival trim; see known-corrections.md for the current full list).
 --
 -- What "channel" means here (IMPORTANT CAVEAT):
 -- channel = us.first_payment_referrer_cons_l0_mktg_chnl_ft28d, from
