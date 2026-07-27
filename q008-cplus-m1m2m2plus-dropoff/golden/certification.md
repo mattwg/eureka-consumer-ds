@@ -40,4 +40,4 @@ certifying run in `../runs/2026-07-24/`.
 > part, but yes we should take the blended matured cohort as payment retry attempts happen
 > till 7 days.
 >
-> 3. read "M2+" as payment_order ≥ 2 aggregate. Confirm. : Yes thats corret.
+> 3. read "M2+" as payment_order ≥ 2 aggregate. Confirm. : Yes thats correct.
