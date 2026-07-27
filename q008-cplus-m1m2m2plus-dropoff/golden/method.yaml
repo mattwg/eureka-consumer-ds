@@ -53,3 +53,4 @@ external_anchor_note: >
   metric-definitions.md (M1 62.6 / M2 67.8 / M3 74.8 / M4 78.5 / M5 79.5) was also reproduced
   to the decimal by the certifying run.
 reviewer: bhkumar-coursera
+certification_record: golden/certification.md   # verbatim reviewer verdict + anchor link
