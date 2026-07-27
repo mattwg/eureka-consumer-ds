@@ -30,7 +30,7 @@ seed. Golden answers get added later, one PR per question.
 | q005 | Total payers MTD vs last month and last year | consumer-ds-metrics-lookup | draft | |
 | q006 | C+ monthly 40%-off promo, 4-week trend, promo vs non-promo | consumer-ds-metrics-lookup | draft | |
 | q007 | Retention M1→M12: discount vs upsell vs full-price | consumer-ds-metrics-lookup | draft | |
-| q008 | C+ monthly M1/M2/M2+ retention, biggest drop-off | consumer-ds-metrics-lookup | **in_review** | golden proposed, ran live, benchmark reproduced |
+| q008 | C+ monthly M1/M2/M2+ retention, biggest drop-off | consumer-ds-metrics-lookup | draft | |
 | q009 | Retention monthly vs annual, first vs repeat renewal | consumer-ds-metrics-lookup | draft | |
 | q010 | Terminal-sub completion drop-off, trend over time | consumer-ds-metrics-lookup | draft | |
 | q011 | Full 12-month retention curve, Jan 2026 C+ monthly cohort, YoY | consumer-ds-metrics-lookup | draft | |
