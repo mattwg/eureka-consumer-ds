@@ -41,6 +41,18 @@ seed. Golden answers get added later, one PR per question.
 | q016 | M2 retention fell off a cliff around Mar 17 2026 — why | consumer-ds-metric-rca | draft | skill not built |
 | q017 | E2C traffic surge since Mar 11, Direct dipped — real or re-attribution | consumer-ds-metric-rca | draft | skill not built |
 | q018 | Homepage registrations down 3 weeks — why | consumer-ds-metric-rca | draft | skill not built |
+| q019 | Cash + total payers by region, last complete month | consumer-ds-metrics-lookup | draft | |
+| q020 | Consumer NPL (ex-finaid) + NRL, last complete month | consumer-ds-metrics-lookup | draft | |
+| q021 | Predicted 12-mo LTV by NPL cohort month | consumer-ds-metrics-lookup | draft | |
+| q022 | 14-day registration→paid conversion, Apr-2026 cohort | consumer-ds-metrics-lookup | draft | |
+| q023 | M1 retention by region vs the Jan-2025 benchmark | consumer-ds-metrics-lookup | draft | |
+| q024 | NPL by channel + New-Visit→NPL conversion by channel | consumer-ds-metrics-lookup | draft | |
+| q025 | C+ monthly retention: 40%-promo vs upsell vs full-price | consumer-ds-metrics-lookup | draft | |
+| q026 | Completion-driven cancel vs true churn, by product sub-type | consumer-ds-metrics-lookup | draft | |
+| q027 | YoY M1 retention change — region rate vs mix (MR) | consumer-ds-metrics-lookup + vmr-decomposition | draft | |
+| q028 | QoQ total cash change — volume/mix/rate (VMR) | consumer-ds-metrics-lookup + vmr-decomposition | draft | |
+| q029 | 40%-promo M3→M4 change — region rate vs mix (MR) | consumer-ds-metrics-lookup + vmr-decomposition | draft | |
+| q030 | YoY New-Visit→NPL conversion — channel rate vs mix (MR) | consumer-ds-metrics-lookup + vmr-decomposition | draft | |
 
 **Reviewers to tag on golden PRs:** `srivaakshita`, `bhkumar-coursera`, `atonge-coursera`,
 `ssatyavolu`.
