@@ -1,8 +1,9 @@
 # Query Patterns
 
 Reusable patterns for each cut this skill produces. Every pattern builds on the same
-`campaign_map` CTE (sourced from [campaign-registry.md](campaign-registry.md)) and the three
-standing corrections in [known-corrections.md](known-corrections.md). Worked, saved examples for
+`campaign_map` CTE (sourced from [campaign-registry.md](campaign-registry.md)) and the standing
+corrections in [known-corrections.md](known-corrections.md) (currently six — see that file for the
+full, current list). Worked, saved examples for
 the current quarter live in [../queries/](../queries/) — start from those rather than rewriting
 from scratch.
 
@@ -58,7 +59,7 @@ Totality + by-campaign cash and redemptions, split by payer type. Worked example
 Shape: `campaign_map` CTE → `tagged` CTE (join transactions/completed_carts/subscription_payments/
 products_detail/user_stats_vw, apply the standing corrections, `COALESCE` the ID-based campaign
 lookup with the SKU-fallback date-window CASE for C+ Annual) → final `SELECT` with
-`GROUPING SETS ((campaign, payer_type), ())` for totality + breakdown in one query.
+`GROUPING SETS ((campaign, payer_type), (campaign))` for totality + breakdown in one query.
 
 ## Pattern: Regional split
 
@@ -110,12 +111,28 @@ every time) without hardcoding a stale assumption, while staying fast. See
 
 ## Pattern: Conversion funnel (traffic → click → checkout → purchase)
 
-Not yet finalized as of this writing — see the funnel template discussed in the source
-conversation for the current draft shape (ViewPage → ClickButton "start_cplus_*" →
-ClickPayNowButton "real checkout attempt" → TransactSuccessful, deduped to first conversion per
-user per day). Open items: the promo-landing-page variant's page filter isn't confirmed, and the
-pre-purchase (steps 1–3) campaign-tagging logic (product-track + date-window) is a first pass, not
-validated against actual purchases.
+**Partially finalized — C+ Annual tentpoles, C+ landing page variant only.** Worked example:
+[../queries/tentpole_conversion_funnel_2_5.sql](../queries/tentpole_conversion_funnel_2_5.sql).
+
+Shape: 3 steps, not 4 — `ViewPage` on the C+ page (traffic) → `ClickButton` "start_cplus_annually"
+(checkout-start intent) → actual redemptions (pulled from the base-metrics pattern's confirmed
+totals, not re-derived here). The originally-proposed middle step (`ClickPayNowButton`, "real
+checkout attempt") was dropped — it fires across all Coursera checkouts, not just C+, and returned
+more users than the click step above it (an impossible funnel shape) when tried unscoped; no
+reliable product-context filter was found to narrow it, so it was cut rather than shipped broken.
+
+**Still open, do not silently reintroduce:**
+- **The promotion-landing-page variant is not included.** The original ask wanted "C+ landing page
+  vs. promotion landing page" broken out separately; only the C+ landing page half is built. A
+  `promo_template` `page.type` hypothesis for "promotion landing page" was tried and never
+  confirmed against a real URL (verification queries timed out twice) — don't add it back without
+  confirming the actual page/URL first.
+- **Not yet extended to C+ Monthly** — only March/June Tentpole 2026 are covered.
+- **Step 1 (C+ page traffic) mixes Monthly- and Annual-intent visitors** — the C+ page shows both
+  plans, and there's no reliable way to split intent from a landing-page visit alone. This matches
+  the original reference query's own step-1 definition (same limitation, not a new gap). Step 2
+  (`start_cplus_annually`) is Annual-specific, so the step-2→3 rate is a clean Annual-only
+  conversion rate; the step-1→2 rate is diluted by the mixed-intent step-1 denominator.
 
 ## Pattern: C+ landing page performance (conversion rate, not just redemption count)
 
