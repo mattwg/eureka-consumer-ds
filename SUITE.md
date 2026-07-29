@@ -53,6 +53,14 @@ seed. Golden answers get added later, one PR per question.
 | q028 | QoQ total cash change — volume/mix/rate (VMR) | consumer-ds-metrics-lookup + vmr-decomposition | draft | |
 | q029 | 40%-promo M3→M4 change — region rate vs mix (MR) | consumer-ds-metrics-lookup + vmr-decomposition | draft | |
 | q030 | YoY New-Visit→NPL conversion — channel rate vs mix (MR) | consumer-ds-metrics-lookup + vmr-decomposition | draft | |
+| q031 | New visits & total visits by channel, last complete month | consumer-ds-metrics-lookup | draft | |
+| q032 | Actual cohort LTV/user by payment order, C+ monthly Jan-2025 cohort | consumer-ds-metrics-lookup | draft | |
+| q033 | Weekly B2C cash trend, last 4 complete weeks | consumer-ds-metrics-lookup | draft | |
+| q034 | B2C cash by product sub type, last complete month | consumer-ds-metrics-lookup | draft | |
+| q035 | Cash/NPL/NRL YoY, which region drives the gap | consumer-ds-metrics-lookup | draft | instantiates q003 template |
+| q036 | C+ monthly 40%-promo 4-week trend by product sub type | consumer-ds-metrics-lookup | draft | instantiates q006 template |
+| q037 | Cohort LTV/user: promo vs upsell vs full-price | consumer-ds-metrics-lookup | draft | |
+| q038 | Completion-driven-cancel trend, Specialization monthly, 6mo | consumer-ds-metrics-lookup | draft | instantiates q010 template |
 
 **Reviewers to tag on golden PRs:** `srivaakshita`, `bhkumar-coursera`, `atonge-coursera`,
 `ssatyavolu`.
