@@ -67,9 +67,25 @@ def read_method():
     }
 
 
+def strip_sql_comments(sql):
+    """Drop SQL comments before checking method invariants.
+
+    Comments describe intent ("use next_txn_stamp_sub_level, never next_txn_stamp") and must NOT
+    count as executed SQL: otherwise a comment mentioning the WRONG signal false-fails a correct
+    query (the bug this fixes), and symmetrically a comment naming a REQUIRED table could
+    false-pass a query that never uses it. We strip `/* ... */` blocks and `-- ...` line comments.
+    String literals are preserved (the REQUIRED filters match values like 'B2C'); the naive
+    line-comment strip could over-cut a literal containing '--', which these metric queries never
+    have -- acceptable for this lightweight stdlib checker.
+    """
+    sql = re.sub(r"/\*.*?\*/", " ", sql, flags=re.DOTALL)   # block comments
+    sql = re.sub(r"--[^\n]*", " ", sql)                     # line comments
+    return sql
+
+
 def check_sql(sql):
     problems = []
-    low = sql
+    low = strip_sql_comments(sql)
     for label, pat in REQUIRED:
         if not re.search(pat, low, re.IGNORECASE):
             problems.append(f"missing: {label}")
